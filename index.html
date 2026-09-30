@@ -42,7 +42,6 @@ body{
 @media (min-width:480px) and (min-height:760px){
   #frame{border-radius:44px;border:8px solid #05060a;height:860px;}
 }
-/* ---------- status bar ---------- */
 /* ---------- lock screen ---------- */
 #lock{
   position:absolute;inset:0;z-index:40;
@@ -167,12 +166,39 @@ button.primary:active{opacity:.85;}
 .bubblehead{display:flex;align-items:center;gap:8px;margin-bottom:5px;}
 .bubblehead .bname{font-size:13px;font-weight:600;}
 .bubblehead .bts{font-size:10.5px;color:var(--ink-faint);}
-.bubbletext{font-size:14px;line-height:1.6;background:var(--glass);border:1px solid var(--glass-border);border-radius:12px;padding:10px 12px;white-space:pre-wrap;}
+/* 修复6：调整了气泡文字样式，取消 pre-wrap 防止重复换行导致的间距问题 */
+.bubbletext{
+  font-size:14px;
+  line-height:1.6;
+  background:var(--glass);
+  border:1px solid var(--glass-border);
+  border-radius:12px;
+  padding:10px 12px;
+  white-space:normal; 
+  word-break:break-word;
+}
 .bubbletools{display:flex;gap:12px;flex-wrap:wrap;margin-top:5px;font-size:11px;color:var(--ink-faint);}
 .bubbletools span{cursor:pointer;}
 .bubbletools span:hover{color:var(--accent);}
 .swipenav{color:var(--accent);}
-#of-inputbar input{flex:1;width:auto;margin:0;}
+/* 修复5：新增输入框的特定样式，支持自动高度 */
+#of-inputbar textarea {
+  flex: 1;
+  resize: none;
+  height: 42px;
+  max-height: 100px;
+  padding: 10px 11px;
+  border-radius: 9px;
+  border: 1px solid var(--glass-border);
+  background: rgba(255,255,255,0.05);
+  color: var(--ink);
+  font-size: 14px;
+  outline: none;
+  font-family: inherit;
+  line-height: 1.4;
+  overflow-y: auto;
+}
+#of-inputbar textarea:focus { border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -1021,7 +1047,8 @@ function makeCharactersScreen(){
         const ext=data.extensions||{};
         if(ext.regex_scripts&&ext.regex_scripts.length){
           const rl=loadRegexGroups();
-          const g=ensureGroup(rl,'{{char}}');
+          // 修复3：正则分组根据角色名字命名，避免冲突
+          const g=ensureGroup(rl, charObj.name); 
           ext.regex_scripts.forEach(rs=>{
             const placement=rs.placement||[];
             g.scripts.push({
@@ -1105,20 +1132,27 @@ function toRegex(findStr){
 }
 function collectActiveRegexScripts(charName,presetName){
   const groups=loadRegexGroups();
-  const names=['默认分组','{{char}}'];
+  const names=['默认分组'];
+  if(charName) names.push(charName); // 修复3：识别角色名分组
   if(presetName)names.push(presetName);
   let scripts=[];
   groups.forEach(g=>{if(names.includes(g.name))scripts=scripts.concat(g.scripts.filter(s=>s.enabled));});
   return scripts;
 }
-function applyRegexList(text,scripts,target){
+// 修复1：支持正则内部替换 {{char}} 与 {{user}}
+function applyRegexList(text,scripts,target,charName,userName){
   let out=text;
   scripts.forEach(s=>{
     const applies=target==='user'?s.userTarget:s.aiTarget;
     if(!applies)return;
-    const re=toRegex(s.find);
+    
+    // 替换正则表达式和替换文本中的变量
+    let findStr = (s.find || '').replace(/\{\{char\}\}/g, charName || '').replace(/\{\{user\}\}/g, userName || '');
+    let replaceStr = (s.replace || '').replace(/\{\{char\}\}/g, charName || '').replace(/\{\{user\}\}/g, userName || '');
+    
+    const re=toRegex(findStr);
     if(!re)return;
-    try{out=out.replace(re,s.replace||'');}catch(e){}
+    try{out=out.replace(re,replaceStr);}catch(e){}
   });
   return out;
 }
@@ -1152,17 +1186,19 @@ function buildMessagesForAPI(char,state){
   return msgs;
 }
 
-async function callLLM(msgs){
-  const cfg=loadJSON('ai-phone-settings',{});
-  if(!cfg.llm||!cfg.llm.baseUrl)throw new Error('还没在"设置"里填 LLM API 的 Base URL');
-  const res=await fetch(cfg.llm.baseUrl.replace(/\/$/,'')+'/chat/completions',{
-    method:'POST',
-    headers:{'Content-Type':'application/json','Authorization':'Bearer '+(cfg.llm.apiKey||'')},
-    body:JSON.stringify({model:cfg.llm.model,messages:msgs}),
-  });
-  const data=await res.json();
-  if(!res.ok)throw new Error((data.error&&data.error.message)||('HTTP '+res.status));
-  return (data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content)||'(无回复内容)';
+// 修复2：callLLM 支持中断信号
+async function callLLM(msgs, signal) {
+    const cfg = loadJSON('ai-phone-settings', {});
+    if (!cfg.llm || !cfg.llm.baseUrl) throw new Error('还没在"设置"里填 LLM API 的 Base URL');
+    const res = await fetch(cfg.llm.baseUrl.replace(/\/$/, '') + '/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (cfg.llm.apiKey || '') },
+        body: JSON.stringify({ model: cfg.llm.model, messages: msgs }),
+        signal: signal
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error((data.error && data.error.message) || ('HTTP ' + res.status));
+    return (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '(无回复内容)';
 }
 
 function makeOfflineScreen(){
@@ -1173,13 +1209,15 @@ function makeOfflineScreen(){
     <div class="body" style="display:flex;flex-direction:column;padding:0;flex:1;">
       <div id="of-charpick"></div>
       <div id="of-chat" style="display:none;flex:1;overflow-y:auto;padding:14px;"></div>
-      <div id="of-inputbar" style="display:none;padding:10px 14px calc(env(safe-area-inset-bottom,0px) + 10px);border-top:1px solid var(--glass-border);gap:8px;">
-        <input type="text" id="of-input" placeholder="输入消息…" style="flex:1;">
+      <div id="of-inputbar" style="display:none;padding:10px 14px calc(env(safe-area-inset-bottom,0px) + 10px);border-top:1px solid var(--glass-border);gap:8px; align-items: flex-end;">
+        <textarea id="of-input" placeholder="输入消息…" rows="1"></textarea>
         <button class="primary" id="of-send" style="width:64px;flex:0 0 auto;padding:10px 0;">发送</button>
       </div>
     </div>`;
   div.querySelector('.back').onclick=closeAllScreens;
   let activeChar=null;
+  let isGenerating = false;
+  let abortController = null;
 
   function showCharPicker(){
     div.querySelector('#of-chat').style.display='none';
@@ -1208,30 +1246,24 @@ function makeOfflineScreen(){
     const state=loadOfflineState(ch.id);
     if(state.messages.length===0){
       const greetings=[ch.firstMes,...(ch.altGreetings||[])].filter(Boolean);
-      if(greetings.length>1){renderGreetingPicker(ch,greetings,state);return;}
-      if(greetings.length===1){
-        state.messages.push({id:'m0',role:'ai',name:ch.name,avatar:ch.avatar,ts:Date.now(),swipes:[applyAllMacros(greetings[0],ch.name)],swipeIndex:0,starred:false});
-        saveOfflineState(ch.id,state);
+      if(greetings.length>0){
+        // 修复4：不再使用单独的选择器，直接生成swipes数组，带左右箭头
+        const preset = loadPresets().find(p=>p.id===state.presetId);
+        const regexScripts = collectActiveRegexScripts(ch.name, preset && preset.name);
+        const userName = getPersonaName();
+        const swipes = greetings.map(g => {
+            let processed = applyAllMacros(g, ch.name);
+            processed = applyRegexList(processed, regexScripts, 'ai', ch.name, userName);
+            return processed;
+        });
+        state.messages.push({
+            id: 'm0', role: 'ai', name: ch.name, avatar: ch.avatar, ts: Date.now(),
+            swipes: swipes, swipeIndex: 0, starred: false
+        });
+        saveOfflineState(ch.id, state);
       }
     }
     renderMessages();
-  }
-
-  function renderGreetingPicker(ch,greetings,state){
-    const chat=div.querySelector('#of-chat');
-    chat.style.display='block';
-    chat.innerHTML='<div class="sub" style="padding:8px 0 12px">选一个开场白开始:</div>';
-    greetings.forEach((g,i)=>{
-      const row=document.createElement('div');
-      row.className='plist-item';row.style.cursor='pointer';
-      row.innerHTML=`<div class="plist-head"><div style="flex:1"><div class="nm">开场白 ${i+1}</div><div class="sub" style="margin-top:4px;-webkit-line-clamp:3;display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden">${g.replace(/</g,'&lt;')}</div></div></div>`;
-      row.onclick=()=>{
-        state.messages.push({id:'m0',role:'ai',name:ch.name,avatar:ch.avatar,ts:Date.now(),swipes:[applyAllMacros(g,ch.name)],swipeIndex:0,starred:false});
-        saveOfflineState(ch.id,state);
-        renderMessages();
-      };
-      chat.appendChild(row);
-    });
   }
 
   function fmtTs(t){const d=new Date(t);return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0');}
@@ -1299,8 +1331,8 @@ function makeOfflineScreen(){
     const regexScripts=collectActiveRegexScripts(activeChar.name,preset&&preset.name);
     const historyForApi=buildMessagesForAPI(activeChar,{presetId:state.presetId,messages:state.messages.slice(0,idx)});
     try{
-      let reply=await callLLM(historyForApi);
-      reply=applyRegexList(reply,regexScripts,'ai');
+      let reply=await callLLM(historyForApi, null); // 简单起见，重新生成暂不提供中断
+      reply=applyRegexList(reply,regexScripts,'ai',activeChar.name,getPersonaName());
       state.messages[idx].swipes.push(reply);
       state.messages[idx].swipeIndex=state.messages[idx].swipes.length-1;
     }catch(e){
@@ -1311,35 +1343,78 @@ function makeOfflineScreen(){
     renderMessages();
   }
 
+  // 修复2：重写 sendMessage
   async function sendMessage(text){
-    const state=loadOfflineState(activeChar.id);
-    const preset=loadPresets().find(p=>p.id===state.presetId);
-    const regexScripts=collectActiveRegexScripts(activeChar.name,preset&&preset.name);
-    const processedUser=applyRegexList(text,regexScripts,'user');
-    state.messages.push({id:'m_'+Date.now(),role:'user',name:getPersonaName(),ts:Date.now(),swipes:[processedUser],swipeIndex:0,starred:false});
-    saveOfflineState(activeChar.id,state);
-    renderMessages();
-    const msgs=buildMessagesForAPI(activeChar,state);
-    try{
-      let reply=await callLLM(msgs);
-      reply=applyRegexList(reply,regexScripts,'ai');
-      state.messages.push({id:'m_'+Date.now()+'a',role:'ai',name:activeChar.name,avatar:activeChar.avatar,ts:Date.now(),swipes:[reply],swipeIndex:0,starred:false});
-    }catch(e){
-      state.messages.push({id:'m_'+Date.now()+'e',role:'ai',name:activeChar.name,avatar:activeChar.avatar,ts:Date.now(),swipes:['⚠️ 请求失败:'+e.message+'(如果你是在 claude.ai 预览链接里测试,这是预期内的——发布页面的网络策略不允许直接请求外部API,下载后自行托管才能真正联网)'],swipeIndex:0,starred:false});
+    if (isGenerating) {
+        if (abortController) abortController.abort();
+        return;
     }
-    saveOfflineState(activeChar.id,state);
+    isGenerating = true;
+    abortController = new AbortController();
+    
+    const sendBtn = div.querySelector('#of-send');
+    sendBtn.textContent = '停止';
+    sendBtn.style.background = 'var(--danger)';
+    sendBtn.style.color = '#fff';
+
+    const state = loadOfflineState(activeChar.id);
+    const preset = loadPresets().find(p=>p.id===state.presetId);
+    const regexScripts = collectActiveRegexScripts(activeChar.name, preset && preset.name);
+    const processedUser = applyRegexList(text, regexScripts, 'user', activeChar.name, getPersonaName());
+    
+    state.messages.push({id:'m_'+Date.now(), role:'user', name:getPersonaName(), ts:Date.now(), swipes:[processedUser], swipeIndex:0, starred:false});
+    saveOfflineState(activeChar.id, state);
+    renderMessages();
+    
+    const msgs = buildMessagesForAPI(activeChar, state);
+    try {
+        let reply = await callLLM(msgs, abortController.signal);
+        reply = applyRegexList(reply, regexScripts, 'ai', activeChar.name, getPersonaName());
+        state.messages.push({id:'m_'+Date.now()+'a', role:'ai', name:activeChar.name, avatar:activeChar.avatar, ts:Date.now(), swipes:[reply], swipeIndex:0, starred:false});
+    } catch(e) {
+        if (e.name === 'AbortError') {
+            state.messages.push({id:'m_'+Date.now()+'a', role:'ai', name:activeChar.name, avatar:activeChar.avatar, ts:Date.now(), swipes:['（已停止生成）'], swipeIndex:0, starred:false});
+        } else {
+            state.messages.push({id:'m_'+Date.now()+'e', role:'ai', name:activeChar.name, avatar:activeChar.avatar, ts:Date.now(), swipes:['⚠️ 请求失败:'+e.message], swipeIndex:0, starred:false});
+        }
+    }
+    
+    isGenerating = false;
+    abortController = null;
+    sendBtn.textContent = '发送';
+    sendBtn.style.background = 'var(--accent)';
+    sendBtn.style.color = '#0a2420';
+    saveOfflineState(activeChar.id, state);
     renderMessages();
   }
 
   div.querySelector('#of-switch').onclick=showCharPicker;
+  
+  // 修复5：输入框回车发送与高度自适应
+  const inputEl = div.querySelector('#of-input');
+  inputEl.addEventListener('input', function() {
+      this.style.height = 'auto';
+      this.style.height = Math.min(this.scrollHeight, 100) + 'px';
+  });
+  inputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          div.querySelector('#of-send').click();
+      }
+  });
+
   div.querySelector('#of-send').onclick=()=>{
+    if (isGenerating) {
+        if (abortController) abortController.abort();
+        return;
+    }
     const input=div.querySelector('#of-input');
     const text=input.value.trim();
     if(!text||!activeChar)return;
     input.value='';
+    input.style.height = '42px'; // 重置高度
     sendMessage(text);
   };
-  div.querySelector('#of-input').addEventListener('keydown',(e)=>{if(e.key==='Enter')div.querySelector('#of-send').click();});
 
   const lastCharId=loadActiveCharId();
   const lastChar=lastCharId&&loadCharacters().find(c=>c.id===lastCharId);
