@@ -42,6 +42,7 @@ body{
 @media (min-width:480px) and (min-height:760px){
   #frame{border-radius:44px;border:8px solid #05060a;height:860px;}
 }
+/* ---------- status bar ---------- */
 /* ---------- lock screen ---------- */
 #lock{
   position:absolute;inset:0;z-index:40;
@@ -166,39 +167,17 @@ button.primary:active{opacity:.85;}
 .bubblehead{display:flex;align-items:center;gap:8px;margin-bottom:5px;}
 .bubblehead .bname{font-size:13px;font-weight:600;}
 .bubblehead .bts{font-size:10.5px;color:var(--ink-faint);}
-/* 修复6：调整了气泡文字样式，取消 pre-wrap 防止重复换行导致的间距问题 */
-.bubbletext{
-  font-size:14px;
-  line-height:1.6;
-  background:var(--glass);
-  border:1px solid var(--glass-border);
-  border-radius:12px;
-  padding:10px 12px;
-  white-space:normal; 
-  word-break:break-word;
-}
+.bubbletext{font-size:14px;line-height:1.6;background:var(--glass);border:1px solid var(--glass-border);border-radius:12px;padding:10px 12px;white-space:pre-wrap;}
 .bubbletools{display:flex;gap:12px;flex-wrap:wrap;margin-top:5px;font-size:11px;color:var(--ink-faint);}
 .bubbletools span{cursor:pointer;}
 .bubbletools span:hover{color:var(--accent);}
-.swipenav{color:var(--accent);}
-/* 修复5：新增输入框的特定样式，支持自动高度 */
-#of-inputbar textarea {
-  flex: 1;
-  resize: none;
-  height: 42px;
-  max-height: 100px;
-  padding: 10px 11px;
-  border-radius: 9px;
-  border: 1px solid var(--glass-border);
-  background: rgba(255,255,255,0.05);
-  color: var(--ink);
-  font-size: 14px;
-  outline: none;
-  font-family: inherit;
-  line-height: 1.4;
-  overflow-y: auto;
-}
-#of-inputbar textarea:focus { border-color: var(--accent); }
+.bubbletools{align-items:center;}
+.swipenav{display:flex;align-items:center;gap:2px;margin-left:auto;color:var(--accent);}
+.swipenav .arrow{padding:2px 10px;font-size:20px;line-height:1;user-select:none;}
+.swipenav .pg{min-width:34px;text-align:center;color:var(--ink-dim);font-size:12px;}
+#of-inputbar{align-items:flex-end;}
+#of-input{flex:1;width:auto;margin:0;min-height:42px;max-height:140px;resize:none;padding:10px 11px;border-radius:9px;border:1px solid var(--glass-border);background:rgba(255,255,255,0.05);color:var(--ink);font-size:14px;line-height:1.5;font-family:inherit;outline:none;overflow-y:auto;}
+#of-input:focus{border-color:var(--accent);}
 </style>
 </head>
 <body>
@@ -612,6 +591,7 @@ function makePresetsScreen(){
     });
   }
   renderList();
+  div._refresh=renderList;
   return div;
 }
 
@@ -729,12 +709,15 @@ function makeWorldbookScreen(){
     });
   }
   renderList();
+  div._refresh=renderList;
   return div;
 }
 
 /* ---------------- regex (grouped) ---------------- */
 function loadRegexGroups(){return loadJSON('ai-phone-regex',[]);}
 function saveRegexGroups(list){saveJSON('ai-phone-regex',list);}
+let _uidSeq=0;
+function uid(p){return p+Date.now().toString(36)+(++_uidSeq)+Math.random().toString(36).slice(2,5);}
 function ensureGroup(list,name){
   let g=list.find(x=>x.name===name);
   if(!g){g={id:'grp_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),name:name,scripts:[]};list.push(g);}
@@ -793,8 +776,9 @@ function makeRegexScreen(){
             const g=ensureGroup(list,p.name);
             p._rawExtRegex.forEach(rs=>{
               const placement=rs.placement||[];
+              if(g.scripts.some(x=>x.name===(rs.scriptName||'未命名正则')&&x.find===(rs.findRegex||'')))return;
               g.scripts.push({
-                id:'rx_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),
+                id:uid('rx_'),
                 name:rs.scriptName||'未命名正则',
                 find:rs.findRegex||'',
                 replace:rs.replaceString||'',
@@ -831,7 +815,7 @@ function makeRegexScreen(){
     const list=loadRegexGroups();
     const g=ensureGroup(list,'默认分组');
     g.scripts.push({
-      id:'rx_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),
+      id:uid('rx_'),
       name:name,find:find,replace:replace,enabled:true,
       userTarget:div.querySelector('#r-new-target [data-k=userTarget]').classList.contains('on'),
       aiTarget:div.querySelector('#r-new-target [data-k=aiTarget]').classList.contains('on'),
@@ -919,6 +903,7 @@ function makeRegexScreen(){
     });
   }
   renderList();
+  div._refresh=renderList;
   return div;
 }
 
@@ -1047,12 +1032,12 @@ function makeCharactersScreen(){
         const ext=data.extensions||{};
         if(ext.regex_scripts&&ext.regex_scripts.length){
           const rl=loadRegexGroups();
-          // 修复3：正则分组根据角色名字命名，避免冲突
-          const g=ensureGroup(rl, charObj.name); 
+          const g={id:uid('grp_'),name:charObj.name,charId:charObj.id,scripts:[]};
+          rl.push(g);
           ext.regex_scripts.forEach(rs=>{
             const placement=rs.placement||[];
             g.scripts.push({
-              id:'rx_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),
+              id:uid('rx_'),
               name:rs.scriptName||'未命名正则',
               find:rs.findRegex||'',replace:rs.replaceString||'',
               enabled:!rs.disabled,
@@ -1107,52 +1092,65 @@ function makeCharactersScreen(){
       item.querySelector('[data-del]').onclick=(e)=>{
         e.stopPropagation();
         saveCharacters(loadCharacters().filter(x=>x.id!==ch.id));
+        saveRegexGroups(loadRegexGroups().filter(g=>g.charId!==ch.id));
         renderList();
       };
       box.appendChild(item);
     });
   }
   renderList();
+  div._refresh=renderList;
   return div;
 }
 
 /* ---------------- offline chat ---------------- */
 function getPersonaName(){const cfg=loadJSON('ai-phone-settings',{});return (cfg.persona&&cfg.persona.name)||'User';}
+function normNL(t){return String(t==null?'':t).replace(/\r\n?/g,'\n');}
+function esc(t){return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function applyAllMacros(text,charName){
-  let t=applyMacros(text||'');
-  t=t.replace(/{{char}}/g,charName||'').replace(/{{user}}/g,getPersonaName());
-  return t;
+  const t=applyMacros(normNL(text));
+  const c=charName||'',u=getPersonaName();
+  return t.replace(/{{char}}/gi,()=>c).replace(/{{user}}/gi,()=>u)
+          .replace(/<char>/gi,()=>c).replace(/<bot>/gi,()=>c).replace(/<user>/gi,()=>u);
 }
 function toRegex(findStr){
-  const m=/^\/(.*)\/([a-z]*)$/i.exec(findStr||'');
+  const m=/^\/([\s\S]*)\/([a-z]*)$/i.exec(findStr||'');
   try{
-    if(m)return new RegExp(m[1],m[2].includes('g')?m[2]:m[2]+'g');
+    if(m){let f=m[2];if(!f.includes('g'))f+='g';return new RegExp(m[1],f);}
     return findStr?new RegExp(findStr,'g'):null;
   }catch(e){return null;}
 }
-function collectActiveRegexScripts(charName,presetName){
+function collectActiveRegexScripts(charName,presetName,charId){
   const groups=loadRegexGroups();
-  const names=['默认分组'];
-  if(charName) names.push(charName); // 修复3：识别角色名分组
-  if(presetName)names.push(presetName);
   let scripts=[];
-  groups.forEach(g=>{if(names.includes(g.name))scripts=scripts.concat(g.scripts.filter(s=>s.enabled));});
+  groups.forEach(g=>{
+    let ok=false;
+    if(g.name==='默认分组'||g.name==='{{char}}')ok=true;            // 默认分组 / 旧版遗留分组
+    else if(g.charId)ok=(g.charId===charId);                          // 角色卡导入的分组:只对该角色生效
+    else if(g.name===charName||(presetName&&g.name===presetName))ok=true; // 预设分组:当前预设
+    if(ok)scripts=scripts.concat((g.scripts||[]).filter(s=>s.enabled));
+  });
   return scripts;
 }
-// 修复1：支持正则内部替换 {{char}} 与 {{user}}
-function applyRegexList(text,scripts,target,charName,userName){
-  let out=text;
+/* role: 'user' | 'ai';  mode: 'display'(只影响显示) | 'prompt'(只影响发给模型的内容) */
+function applyRegexList(text,scripts,role,mode,ctx){
+  let out=normNL(text);
+  ctx=ctx||{};
+  const cName=ctx.char||'',uName=ctx.user||'';
   scripts.forEach(s=>{
-    const applies=target==='user'?s.userTarget:s.aiTarget;
-    if(!applies)return;
-    
-    // 替换正则表达式和替换文本中的变量
-    let findStr = (s.find || '').replace(/\{\{char\}\}/g, charName || '').replace(/\{\{user\}\}/g, userName || '');
-    let replaceStr = (s.replace || '').replace(/\{\{char\}\}/g, charName || '').replace(/\{\{user\}\}/g, userName || '');
-    
-    const re=toRegex(findStr);
+    if(!(role==='user'?s.userTarget:s.aiTarget))return;
+    if(mode==='display'&&s.promptOnly)return;
+    if(mode==='prompt'&&s.markdownOnly)return;
+    const subFind=t=>String(t||'')
+      .replace(/{{char}}/gi,()=>cName.replace(/[.*+?^${}()|[\]\\\/]/g,'\\$&'))
+      .replace(/{{user}}/gi,()=>uName.replace(/[.*+?^${}()|[\]\\\/]/g,'\\$&'));
+    const re=toRegex(subFind(s.find));
     if(!re)return;
-    try{out=out.replace(re,replaceStr);}catch(e){}
+    const rep=String(s.replace||'')
+      .replace(/{{match}}/gi,'$$&')
+      .replace(/{{char}}/gi,()=>cName.replace(/\$/g,'$$$$'))
+      .replace(/{{user}}/gi,()=>uName.replace(/\$/g,'$$$$'));
+    try{out=out.replace(re,rep);}catch(e){}
   });
   return out;
 }
@@ -1160,6 +1158,8 @@ function loadOfflineState(charId){return loadJSON('ai-phone-chat-'+charId,{prese
 function saveOfflineState(charId,state){saveJSON('ai-phone-chat-'+charId,state);}
 function loadActiveCharId(){return loadJSON('ai-phone-active-char',null);}
 function saveActiveCharId(id){saveJSON('ai-phone-active-char',id);}
+
+const ERR_PREFIX='⚠️ 请求失败';
 
 function buildMessagesForAPI(char,state){
   const presets=loadPresets();
@@ -1179,26 +1179,71 @@ function buildMessagesForAPI(char,state){
     if(it.enabled&&(it.scope==='all'||it.scope==='offline'))wbText+=it.content+'\n';
   }));
   if(wbText)msgs.push({role:'system',content:applyAllMacros(wbText,char.name)});
+  const scripts=collectActiveRegexScripts(char.name,preset&&preset.name,char.id);
+  const ctx={char:char.name,user:getPersonaName()};
   state.messages.forEach(m=>{
-    const text=m.swipes[m.swipeIndex]||'';
-    msgs.push({role:m.role==='ai'?'assistant':'user',content:text});
+    let text=m.swipes[m.swipeIndex]||'';
+    const ei=text.indexOf(ERR_PREFIX);
+    if(ei===0)return;                       // 纯报错消息不发给模型
+    if(ei>0)text=text.slice(0,ei).trim();   // 带部分内容的报错,只保留正文
+    const role=m.role==='ai'?'ai':'user';
+    text=applyRegexList(text,scripts,role,'prompt',ctx);
+    msgs.push({role:role==='ai'?'assistant':'user',content:text});
   });
   return msgs;
 }
 
-// 修复2：callLLM 支持中断信号
-async function callLLM(msgs, signal) {
-    const cfg = loadJSON('ai-phone-settings', {});
-    if (!cfg.llm || !cfg.llm.baseUrl) throw new Error('还没在"设置"里填 LLM API 的 Base URL');
-    const res = await fetch(cfg.llm.baseUrl.replace(/\/$/, '') + '/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (cfg.llm.apiKey || '') },
-        body: JSON.stringify({ model: cfg.llm.model, messages: msgs }),
-        signal: signal
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error((data.error && data.error.message) || ('HTTP ' + res.status));
-    return (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '(无回复内容)';
+/* 流式请求(SSE);服务端不支持流式时自动退回普通请求。opts:{signal,onDelta(fullText)} */
+async function callLLM(msgs,opts){
+  opts=opts||{};
+  const cfg=loadJSON('ai-phone-settings',{});
+  if(!cfg.llm||!cfg.llm.baseUrl)throw new Error('还没在"设置"里填 LLM API 的 Base URL');
+  const url=cfg.llm.baseUrl.replace(/\/$/,'')+'/chat/completions';
+  const headers={'Content-Type':'application/json','Authorization':'Bearer '+(cfg.llm.apiKey||'')};
+  async function doFetch(stream){
+    const body={model:cfg.llm.model,messages:msgs};
+    if(stream)body.stream=true;
+    return fetch(url,{method:'POST',headers,body:JSON.stringify(body),signal:opts.signal});
+  }
+  let res=await doFetch(true);
+  if(!res.ok&&(res.status===400||res.status===422))res=await doFetch(false);
+  if(!res.ok){
+    let msg='HTTP '+res.status;
+    try{const d=await res.json();msg=(d.error&&d.error.message)||d.message||msg;}catch(e){}
+    throw new Error(msg);
+  }
+  const ct=res.headers.get('content-type')||'';
+  if(!res.body||ct.indexOf('text/event-stream')<0){
+    const data=await res.json();
+    const text=(data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content)||'';
+    if(!text)throw new Error('接口返回里没有回复内容');
+    if(opts.onDelta)opts.onDelta(text);
+    return text;
+  }
+  const reader=res.body.getReader();
+  const dec=new TextDecoder();
+  let buf='',full='';
+  while(true){
+    const {done,value}=await reader.read();
+    if(done)break;
+    buf+=dec.decode(value,{stream:true});
+    let i;
+    while((i=buf.indexOf('\n'))>=0){
+      const line=buf.slice(0,i).replace(/\r$/,'');
+      buf=buf.slice(i+1);
+      if(line.indexOf('data:')!==0)continue;
+      const payload=line.slice(5).trim();
+      if(!payload||payload==='[DONE]')continue;
+      let j;
+      try{j=JSON.parse(payload);}catch(e){continue;}
+      if(j.error)throw new Error(j.error.message||JSON.stringify(j.error));
+      const c=j.choices&&j.choices[0];
+      const piece=c&&((c.delta&&c.delta.content)||(c.message&&c.message.content));
+      if(piece){full+=piece;if(opts.onDelta)opts.onDelta(full);}
+    }
+  }
+  if(!full)throw new Error('接口返回里没有回复内容');
+  return full;
 }
 
 function makeOfflineScreen(){
@@ -1209,21 +1254,47 @@ function makeOfflineScreen(){
     <div class="body" style="display:flex;flex-direction:column;padding:0;flex:1;">
       <div id="of-charpick"></div>
       <div id="of-chat" style="display:none;flex:1;overflow-y:auto;padding:14px;"></div>
-      <div id="of-inputbar" style="display:none;padding:10px 14px calc(env(safe-area-inset-bottom,0px) + 10px);border-top:1px solid var(--glass-border);gap:8px; align-items: flex-end;">
-        <textarea id="of-input" placeholder="输入消息…" rows="1"></textarea>
+      <div id="of-inputbar" style="display:none;padding:10px 14px calc(env(safe-area-inset-bottom,0px) + 10px);border-top:1px solid var(--glass-border);gap:8px;">
+        <textarea id="of-input" rows="1" placeholder="输入消息…"></textarea>
         <button class="primary" id="of-send" style="width:64px;flex:0 0 auto;padding:10px 0;">发送</button>
       </div>
     </div>`;
-  div.querySelector('.back').onclick=closeAllScreens;
+  const $=sel=>div.querySelector(sel);
+  $('.back').onclick=closeAllScreens;
   let activeChar=null;
-  let isGenerating = false;
-  let abortController = null;
+  let inPicker=true;
+  let pending=null; // {charId,controller,text,startTs,timer,scripts,ctx}
+
+  function greetingList(ch){
+    return [ch.firstMes,...(ch.altGreetings||[])].filter(g=>g&&String(g).trim()).map(g=>applyAllMacros(g,ch.name));
+  }
+  function initGreeting(ch,state){
+    const gs=greetingList(ch);
+    if(!gs.length)return false;
+    state.messages.push({id:'m0',role:'ai',name:ch.name,avatar:ch.avatar,ts:Date.now(),swipes:gs,swipeIndex:0,starred:false,isGreeting:true,_gm:true});
+    return true;
+  }
+  // 老存档:开场白只存了被选中的那一条,这里一次性把其余开场白补成可翻页的候选
+  function mergeGreetings(ch,state){
+    const m=state.messages[0];
+    if(!m||m.id!=='m0'||m._gm)return false;
+    m._gm=true;m.isGreeting=true;
+    if(m.swipes.length>1)return true;
+    const gs=greetingList(ch);
+    if(gs.length<2)return true;
+    const cur=m.swipes[m.swipeIndex]||'';
+    let k=gs.indexOf(cur);
+    if(k<0){gs.unshift(cur);k=0;}
+    m.swipes=gs;m.swipeIndex=k;
+    return true;
+  }
 
   function showCharPicker(){
-    div.querySelector('#of-chat').style.display='none';
-    div.querySelector('#of-inputbar').style.display='none';
-    div.querySelector('#of-title').textContent='线下';
-    const box=div.querySelector('#of-charpick');
+    inPicker=true;
+    $('#of-chat').style.display='none';
+    $('#of-inputbar').style.display='none';
+    $('#of-title').textContent='线下';
+    const box=$('#of-charpick');
     box.style.display='block';box.style.padding='14px';
     const chars=loadCharacters();
     if(chars.length===0){box.innerHTML='<div class="emptylist">还没有导入任何角色卡,先去"角色"app导入一张</div>';return;}
@@ -1231,90 +1302,136 @@ function makeOfflineScreen(){
     chars.forEach(ch=>{
       const row=document.createElement('div');
       row.className='plist-item';row.style.cursor='pointer';
-      row.innerHTML=`<div class="plist-head"><img class="avatar" src="${ch.avatar||''}"><div style="flex:1"><div class="nm">${ch.name}</div><div class="sub">点击开始对话</div></div></div>`;
+      row.innerHTML=`<div class="plist-head"><img class="avatar" src="${ch.avatar||''}"><div style="flex:1"><div class="nm">${esc(ch.name)}</div><div class="sub">点击开始对话</div></div></div>`;
       row.onclick=()=>openChat(ch);
       box.appendChild(row);
     });
   }
 
   function openChat(ch){
+    inPicker=false;
     activeChar=ch;saveActiveCharId(ch.id);
-    div.querySelector('#of-title').textContent=ch.name;
-    div.querySelector('#of-charpick').style.display='none';
-    div.querySelector('#of-chat').style.display='block';
-    div.querySelector('#of-inputbar').style.display='flex';
+    $('#of-title').textContent=ch.name;
+    $('#of-charpick').style.display='none';
+    $('#of-chat').style.display='block';
+    $('#of-inputbar').style.display='flex';
     const state=loadOfflineState(ch.id);
-    if(state.messages.length===0){
-      const greetings=[ch.firstMes,...(ch.altGreetings||[])].filter(Boolean);
-      if(greetings.length>0){
-        // 修复4：不再使用单独的选择器，直接生成swipes数组，带左右箭头
-        const preset = loadPresets().find(p=>p.id===state.presetId);
-        const regexScripts = collectActiveRegexScripts(ch.name, preset && preset.name);
-        const userName = getPersonaName();
-        const swipes = greetings.map(g => {
-            let processed = applyAllMacros(g, ch.name);
-            processed = applyRegexList(processed, regexScripts, 'ai', ch.name, userName);
-            return processed;
-        });
-        state.messages.push({
-            id: 'm0', role: 'ai', name: ch.name, avatar: ch.avatar, ts: Date.now(),
-            swipes: swipes, swipeIndex: 0, starred: false
-        });
-        saveOfflineState(ch.id, state);
-      }
-    }
-    renderMessages();
+    const dirty=state.messages.length===0?initGreeting(ch,state):mergeGreetings(ch,state);
+    if(dirty)saveOfflineState(ch.id,state);
+    updateSendBtn();
+    renderMessages('bottom');
   }
 
   function fmtTs(t){const d=new Date(t);return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0');}
+  function isPendingHere(){return !!(pending&&activeChar&&pending.charId===activeChar.id);}
+  function updateSendBtn(){
+    const b=$('#of-send');
+    b.textContent=pending?'停止':'发送';
+    b.style.background=pending?'var(--danger)':'';
+    b.style.color=pending?'#fff':'';
+  }
+  function updatePendingStatus(){
+    if(!isPendingHere())return;
+    const st=$('#of-pstatus');if(!st)return;
+    const sec=Math.floor((Date.now()-pending.startTs)/1000);
+    const n=pending.text.length;
+    st.textContent=n?`✍️ 生成中 · ${n} 字 · ${sec}s`:`⏳ 等待响应… ${sec}s`;
+  }
+  function updatePendingText(){
+    if(!isPendingHere())return;
+    const tx=$('#of-ptext');if(!tx)return;
+    const chat=$('#of-chat');
+    const near=chat.scrollHeight-chat.scrollTop-chat.clientHeight<140;
+    tx.textContent=pending.text?applyRegexList(pending.text,pending.scripts,'ai','display',pending.ctx):'…';
+    updatePendingStatus();
+    if(near)chat.scrollTop=chat.scrollHeight;
+  }
+  function stopGeneration(){if(pending)pending.controller.abort();}
 
-  function renderMessages(){
+  /* scrollMode: 'bottom' | 'keep' | 'top' */
+  function renderMessages(scrollMode){
     if(!activeChar)return;
     const state=loadOfflineState(activeChar.id);
-    const chat=div.querySelector('#of-chat');
+    const chat=$('#of-chat');
+    const prevScroll=chat.scrollTop;
     chat.style.display='block';
     chat.innerHTML='';
+    const preset=loadPresets().find(p=>p.id===state.presetId);
+    const scripts=collectActiveRegexScripts(activeChar.name,preset&&preset.name,activeChar.id);
+    const ctx={char:activeChar.name,user:getPersonaName()};
+
+    if(state.messages.length===0&&!isPendingHere()){
+      const e=document.createElement('div');
+      e.className='emptylist';
+      e.innerHTML='还没有消息<br><br><span class="importbtn" style="display:inline-block;padding:10px 18px;margin:0" id="of-reinit">载入开场白</span>';
+      e.querySelector('#of-reinit').onclick=()=>{
+        const st=loadOfflineState(activeChar.id);
+        if(initGreeting(activeChar,st)){saveOfflineState(activeChar.id,st);renderMessages('top');}
+        else alert('这个角色没有开场白');
+      };
+      chat.appendChild(e);
+    }
+
+    const lastIdx=state.messages.length-1;
     state.messages.forEach((m,idx)=>{
+      const isAI=m.role==='ai';
+      const text=m.swipes[m.swipeIndex]||'';
+      const isLastAI=isAI&&idx===lastIdx&&idx>0&&m.id!=='m0';
+      const showNav=isAI&&(m.swipes.length>1||isLastAI);
       const bubble=document.createElement('div');
       bubble.className='chatmsg';
-      const text=m.swipes[m.swipeIndex]||'';
-      const swipeNav=m.role==='ai'&&m.swipes.length>1?`<span class="swipenav" data-swipe>‹ ${m.swipeIndex+1}/${m.swipes.length} ›</span>`:'';
       bubble.innerHTML=`
         <div class="bubblehead">
           ${m.avatar?'<img class="avatar" style="width:26px;height:26px;border-radius:8px" src="'+m.avatar+'">':''}
-          <span class="bname">${m.name}</span>
+          <span class="bname">${esc(m.name)}</span>
           <span class="bts">${fmtTs(m.ts)}</span>
         </div>
-        <div class="bubbletext">${text.replace(/</g,'&lt;').replace(/\n/g,'<br>')}</div>
+        <div class="bubbletext"></div>
         <div class="bubbletools">
-          ${swipeNav}
           <span data-act="star">${m.starred?'★ 收藏':'☆ 收藏'}</span>
           <span data-act="edit">编辑</span>
           <span data-act="del">删除</span>
-          ${m.role==='ai'&&idx===state.messages.length-1?'<span data-act="regen">重新生成</span>':''}
+          ${isLastAI?'<span data-act="regen">重新生成</span>':''}
+          ${showNav?`<span class="swipenav"><span class="arrow" data-sw="-1">‹</span><span class="pg">${m.swipeIndex+1}/${m.swipes.length}</span><span class="arrow" data-sw="1">›</span></span>`:''}
         </div>`;
-      const nav=bubble.querySelector('[data-swipe]');
-      if(nav)nav.onclick=()=>{
-        const st=loadOfflineState(activeChar.id);
-        st.messages[idx].swipeIndex=(st.messages[idx].swipeIndex+1)%st.messages[idx].swipes.length;
-        saveOfflineState(activeChar.id,st);renderMessages();
-      };
+      bubble.querySelector('.bubbletext').textContent=applyRegexList(text,scripts,isAI?'ai':'user','display',ctx);
+
+      bubble.querySelectorAll('[data-sw]').forEach(a=>{
+        a.onclick=()=>{
+          if(pending)return;
+          const dir=parseInt(a.dataset.sw,10);
+          const st=loadOfflineState(activeChar.id);
+          const mm=st.messages[idx];
+          if(!mm)return;
+          const n=mm.swipes.length;
+          if(dir>0&&mm.swipeIndex===n-1&&isLastAI){regenerate(idx);return;}
+          mm.swipeIndex=(mm.swipeIndex+dir+n)%n;
+          saveOfflineState(activeChar.id,st);
+          renderMessages(idx===0?'top':'keep');
+        };
+      });
       bubble.querySelector('[data-act=star]').onclick=()=>{
         const st=loadOfflineState(activeChar.id);st.messages[idx].starred=!st.messages[idx].starred;
-        saveOfflineState(activeChar.id,st);renderMessages();
+        saveOfflineState(activeChar.id,st);renderMessages('keep');
       };
       bubble.querySelector('[data-act=del]').onclick=()=>{
+        if(pending)return;
         const st=loadOfflineState(activeChar.id);st.messages.splice(idx,1);
-        saveOfflineState(activeChar.id,st);renderMessages();
+        saveOfflineState(activeChar.id,st);renderMessages('keep');
       };
       bubble.querySelector('[data-act=edit]').onclick=()=>{
         const ta=document.createElement('textarea');
-        ta.value=text;ta.style.width='100%';ta.style.minHeight='70px';
+        ta.value=text;
+        ta.style.cssText='width:100%;min-height:120px;background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);border-radius:10px;color:var(--ink);font-size:14px;line-height:1.6;padding:10px 12px;font-family:inherit;outline:none;';
         bubble.querySelector('.bubbletext').replaceWith(ta);
+        ta.style.height=Math.min(ta.scrollHeight+4,420)+'px';
         ta.onblur=()=>{
           const st=loadOfflineState(activeChar.id);
-          st.messages[idx].swipes[st.messages[idx].swipeIndex]=ta.value;
-          saveOfflineState(activeChar.id,st);renderMessages();
+          if(st.messages[idx]){
+            st.messages[idx].swipes[st.messages[idx].swipeIndex]=ta.value;
+            saveOfflineState(activeChar.id,st);
+          }
+          renderMessages('keep');
         };
         ta.focus();
       };
@@ -1322,98 +1439,119 @@ function makeOfflineScreen(){
       if(regenBtn)regenBtn.onclick=()=>regenerate(idx);
       chat.appendChild(bubble);
     });
-    chat.scrollTop=chat.scrollHeight;
+
+    if(isPendingHere()){
+      const pb=document.createElement('div');
+      pb.className='chatmsg';
+      pb.innerHTML=`
+        <div class="bubblehead">
+          ${activeChar.avatar?'<img class="avatar" style="width:26px;height:26px;border-radius:8px" src="'+activeChar.avatar+'">':''}
+          <span class="bname">${esc(activeChar.name)}</span>
+          <span class="bts" id="of-pstatus" style="color:var(--accent)"></span>
+        </div>
+        <div class="bubbletext" id="of-ptext">…</div>
+        <div class="bubbletools"><span data-act="stop" style="color:var(--danger)">■ 停止生成</span></div>`;
+      pb.querySelector('[data-act=stop]').onclick=stopGeneration;
+      chat.appendChild(pb);
+      updatePendingText();
+    }
+
+    if(scrollMode==='keep')chat.scrollTop=prevScroll;
+    else if(scrollMode==='top')chat.scrollTop=0;
+    else chat.scrollTop=chat.scrollHeight;
+  }
+
+  function finalText(r){
+    if(r.errMsg){
+      const hint=/Failed to fetch|NetworkError|Load failed/i.test(r.errMsg)?'(网络不通、被 CORS 拦截,或 Base URL 填错了)':'';
+      return (r.text?r.text+'\n\n':'')+ERR_PREFIX+':'+r.errMsg+hint;
+    }
+    return r.text||null;
+  }
+
+  async function runGeneration(ch,msgs){
+    const state=loadOfflineState(ch.id);
+    const preset=loadPresets().find(p=>p.id===state.presetId);
+    pending={
+      charId:ch.id,controller:new AbortController(),text:'',startTs:Date.now(),
+      scripts:collectActiveRegexScripts(ch.name,preset&&preset.name,ch.id),
+      ctx:{char:ch.name,user:getPersonaName()},
+    };
+    pending.timer=setInterval(updatePendingStatus,500);
+    updateSendBtn();
+    renderMessages('bottom');
+    let text='',errMsg=null;
+    try{
+      text=await callLLM(msgs,{
+        signal:pending.controller.signal,
+        onDelta:t=>{if(pending){pending.text=t;updatePendingText();}},
+      });
+    }catch(e){
+      text=pending?pending.text:'';
+      if(!(e&&e.name==='AbortError'))errMsg=(e&&e.message)||String(e);
+    }
+    clearInterval(pending.timer);
+    pending=null;
+    updateSendBtn();
+    return{text:text||'',errMsg};
   }
 
   async function regenerate(idx){
-    const state=loadOfflineState(activeChar.id);
-    const preset=loadPresets().find(p=>p.id===state.presetId);
-    const regexScripts=collectActiveRegexScripts(activeChar.name,preset&&preset.name);
-    const historyForApi=buildMessagesForAPI(activeChar,{presetId:state.presetId,messages:state.messages.slice(0,idx)});
-    try{
-      let reply=await callLLM(historyForApi, null); // 简单起见，重新生成暂不提供中断
-      reply=applyRegexList(reply,regexScripts,'ai',activeChar.name,getPersonaName());
-      state.messages[idx].swipes.push(reply);
-      state.messages[idx].swipeIndex=state.messages[idx].swipes.length-1;
-    }catch(e){
-      state.messages[idx].swipes.push('⚠️ 请求失败:'+e.message);
-      state.messages[idx].swipeIndex=state.messages[idx].swipes.length-1;
-    }
-    saveOfflineState(activeChar.id,state);
-    renderMessages();
+    if(pending||!activeChar)return;
+    const ch=activeChar;
+    const state=loadOfflineState(ch.id);
+    if(!state.messages[idx])return;
+    const msgs=buildMessagesForAPI(ch,{presetId:state.presetId,messages:state.messages.slice(0,idx)});
+    const r=await runGeneration(ch,msgs);
+    const out=finalText(r);
+    const st=loadOfflineState(ch.id);
+    const mm=st.messages[idx];
+    if(mm&&out!==null){mm.swipes.push(out);mm.swipeIndex=mm.swipes.length-1;saveOfflineState(ch.id,st);}
+    if(activeChar&&activeChar.id===ch.id)renderMessages('bottom');
   }
 
-  // 修复2：重写 sendMessage
   async function sendMessage(text){
-    if (isGenerating) {
-        if (abortController) abortController.abort();
-        return;
+    if(pending||!activeChar)return;
+    const ch=activeChar;
+    const state=loadOfflineState(ch.id);
+    state.messages.push({id:'m_'+Date.now(),role:'user',name:getPersonaName(),ts:Date.now(),swipes:[text],swipeIndex:0,starred:false});
+    saveOfflineState(ch.id,state);
+    const msgs=buildMessagesForAPI(ch,state);
+    const r=await runGeneration(ch,msgs);
+    const out=finalText(r);
+    const st=loadOfflineState(ch.id);
+    if(out!==null){
+      st.messages.push({id:'m_'+Date.now()+'a',role:'ai',name:ch.name,avatar:ch.avatar,ts:Date.now(),swipes:[out],swipeIndex:0,starred:false});
     }
-    isGenerating = true;
-    abortController = new AbortController();
-    
-    const sendBtn = div.querySelector('#of-send');
-    sendBtn.textContent = '停止';
-    sendBtn.style.background = 'var(--danger)';
-    sendBtn.style.color = '#fff';
-
-    const state = loadOfflineState(activeChar.id);
-    const preset = loadPresets().find(p=>p.id===state.presetId);
-    const regexScripts = collectActiveRegexScripts(activeChar.name, preset && preset.name);
-    const processedUser = applyRegexList(text, regexScripts, 'user', activeChar.name, getPersonaName());
-    
-    state.messages.push({id:'m_'+Date.now(), role:'user', name:getPersonaName(), ts:Date.now(), swipes:[processedUser], swipeIndex:0, starred:false});
-    saveOfflineState(activeChar.id, state);
-    renderMessages();
-    
-    const msgs = buildMessagesForAPI(activeChar, state);
-    try {
-        let reply = await callLLM(msgs, abortController.signal);
-        reply = applyRegexList(reply, regexScripts, 'ai', activeChar.name, getPersonaName());
-        state.messages.push({id:'m_'+Date.now()+'a', role:'ai', name:activeChar.name, avatar:activeChar.avatar, ts:Date.now(), swipes:[reply], swipeIndex:0, starred:false});
-    } catch(e) {
-        if (e.name === 'AbortError') {
-            state.messages.push({id:'m_'+Date.now()+'a', role:'ai', name:activeChar.name, avatar:activeChar.avatar, ts:Date.now(), swipes:['（已停止生成）'], swipeIndex:0, starred:false});
-        } else {
-            state.messages.push({id:'m_'+Date.now()+'e', role:'ai', name:activeChar.name, avatar:activeChar.avatar, ts:Date.now(), swipes:['⚠️ 请求失败:'+e.message], swipeIndex:0, starred:false});
-        }
-    }
-    
-    isGenerating = false;
-    abortController = null;
-    sendBtn.textContent = '发送';
-    sendBtn.style.background = 'var(--accent)';
-    sendBtn.style.color = '#0a2420';
-    saveOfflineState(activeChar.id, state);
-    renderMessages();
+    saveOfflineState(ch.id,st);
+    if(activeChar&&activeChar.id===ch.id)renderMessages('bottom');
   }
 
-  div.querySelector('#of-switch').onclick=showCharPicker;
-  
-  // 修复5：输入框回车发送与高度自适应
-  const inputEl = div.querySelector('#of-input');
-  inputEl.addEventListener('input', function() {
-      this.style.height = 'auto';
-      this.style.height = Math.min(this.scrollHeight, 100) + 'px';
-  });
-  inputEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-          e.preventDefault();
-          div.querySelector('#of-send').click();
-      }
-  });
-
-  div.querySelector('#of-send').onclick=()=>{
-    if (isGenerating) {
-        if (abortController) abortController.abort();
-        return;
+  const inputEl=$('#of-input');
+  function autosize(){inputEl.style.height='auto';inputEl.style.height=Math.min(inputEl.scrollHeight,140)+'px';}
+  inputEl.addEventListener('input',autosize);
+  inputEl.addEventListener('keydown',(e)=>{
+    // 电脑:Enter 发送,Shift+Enter 换行;手机:Enter 就是换行,用右边按钮发送
+    if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!window.matchMedia('(pointer:coarse)').matches){
+      e.preventDefault();$('#of-send').click();
     }
-    const input=div.querySelector('#of-input');
-    const text=input.value.trim();
+  });
+  $('#of-switch').onclick=showCharPicker;
+  $('#of-send').onclick=()=>{
+    if(pending){stopGeneration();return;}
+    const text=inputEl.value.trim();
     if(!text||!activeChar)return;
-    input.value='';
-    input.style.height = '42px'; // 重置高度
+    inputEl.value='';autosize();
     sendMessage(text);
+  };
+
+  div._refresh=()=>{
+    if(!inPicker&&activeChar){
+      const c=loadCharacters().find(x=>x.id===activeChar.id);
+      if(c){activeChar=c;renderMessages('keep');return;}
+      activeChar=null;
+    }
+    showCharPicker();
   };
 
   const lastCharId=loadActiveCharId();
@@ -1438,6 +1576,8 @@ function openScreen(id){
   if(!builtScreens[id]){
     builtScreens[id]=buildScreen(id);
     screensRoot.appendChild(builtScreens[id]);
+  }else if(builtScreens[id]._refresh){
+    try{builtScreens[id]._refresh();}catch(e){}
   }
   requestAnimationFrame(()=>builtScreens[id].classList.add('show'));
 }

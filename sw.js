@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ai-phone-v1';
+const CACHE_NAME = 'ai-phone-v2';
 const CORE_ASSETS = [
   './index.html',
   './manifest.json',
@@ -22,22 +22,29 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Cache-first for the app shell, network passthrough for everything else
-// (API calls to LLM/image/voice providers should always hit the network).
+// Network-first for the app shell (so a new deploy shows up right away),
+// falling back to the cache when offline. Everything else (LLM/image/voice
+// API calls etc.) passes straight through to the network.
 self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
+  const req = event.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+  if (url.origin !== self.location.origin) return;
+  const isNav = req.mode === 'navigate';
   const isCoreAsset = CORE_ASSETS.some((a) => url.pathname.endsWith(a.replace('./', '')));
-  if (event.request.method !== 'GET' || !isCoreAsset) return;
+  if (!isNav && !isCoreAsset) return;
 
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      const fetchPromise = fetch(event.request)
-        .then((res) => {
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, res.clone()));
-          return res;
-        })
-        .catch(() => cached);
-      return cached || fetchPromise;
-    })
+    fetch(req, { cache: 'no-cache' })
+      .then((res) => {
+        if (res && res.ok && isCoreAsset) {
+          const copy = res.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
+        }
+        return res;
+      })
+      .catch(() =>
+        caches.match(req).then((c) => c || (isNav ? caches.match('./index.html') : undefined))
+      )
   );
 });
