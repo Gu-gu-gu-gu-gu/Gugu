@@ -486,7 +486,23 @@ window.AIPhoneMacros={applyMacros};
 
 /* ---------------- presets ---------------- */
 function loadPresets(){return loadJSON('ai-phone-presets',[]);}
-function getActivePreset(){const id=loadJSON('ai-phone-active-preset',null);return loadPresets().find(p=>p.id===id)||null;}
+const ONLINE_HINT='【场景】现在是手机即时通讯(类微信)聊天,不是线下剧情。你是{{char}},对方是{{user}}。请用口语化的短消息回复,不写旁白和动作描写;一次可发 1~4 条短消息,每条之间空一行。';
+const DEFAULT_ITEMS=[['main','角色系统提示词(角色卡)'],['worldInfoBefore','世界书 · 角色定义之前'],['personaDescription','用户设定'],['charDescription','角色描述'],['charPersonality','角色性格'],['scenario','场景'],['worldInfoAfter','世界书 · 角色定义之后'],['dialogueExamples','对话示例(含世界书示例前/后)'],['onlineHint','线上聊天提示词(仅线上)'],['chatHistory','聊天历史'],['postHistory','角色卡历史后指令']]
+  .map(([identifier,name])=>({identifier,name,marker:true,locked:true,enabled:true,role:'system',scope:identifier==='onlineHint'?'online':'all',content:''}));
+function loadDefaultCfg(){return loadJSON('ai-phone-default-preset',{order:[],custom:[]});}
+function getDefaultPreset(){
+  const c=loadDefaultCfg(),all=DEFAULT_ITEMS.map(x=>Object.assign({},x)).concat(c.custom||[]);
+  const rank=id=>{const i=(c.order||[]).indexOf(id);return i<0?999:i;};
+  const items=all.map((x,i)=>({x,i})).sort((a,b)=>(rank(a.x.identifier)-rank(b.x.identifier))||(a.i-b.i)).map(o=>o.x);
+  return{id:'__default',name:'默认预设',items,builtin:true};
+}
+function getActivePreset(){const id=loadJSON('ai-phone-active-preset',null);return loadPresets().find(p=>p.id===id)||getDefaultPreset();}
+function wiExtra(x){
+  const g=(...ks)=>ks.map(k=>x[k]).find(v=>v!=null);
+  return{probability:g('probability')!=null?g('probability'):100,useProbability:g('useProbability')!==false,scanDepth:g('scanDepth','scan_depth')||null,
+    caseSensitive:!!g('caseSensitive','case_sensitive'),matchWholeWords:!!g('matchWholeWords','match_whole_words'),
+    excludeRecursion:!!g('excludeRecursion','exclude_recursion'),preventRecursion:!!g('preventRecursion','prevent_recursion'),delayUntilRecursion:!!g('delayUntilRecursion','delay_until_recursion')};
+}
 function savePresets(list){saveJSON('ai-phone-presets',list);}
 
 function parseSillyTavernPreset(json,name){
@@ -542,14 +558,51 @@ function makePresetsScreen(){
     reader.readAsText(f);
     fileInput.value='';
   };
+  let defOpen=false;
+  function renderDefault(box){
+    const act=loadJSON('ai-phone-active-preset',null),p=getDefaultPreset();
+    const saveDef=()=>saveJSON('ai-phone-default-preset',{order:p.items.map(i=>i.identifier),custom:p.items.filter(i=>!i.locked)});
+    const persist=()=>{saveDef();renderList();};
+    const sh=document.createElement('div');sh.className='plist-item';
+    const on=loadJSON('ai-phone-share-history',true);
+    sh.innerHTML=`<div class="plist-head"><div style="flex:1"><div class="nm">线上 / 线下历史互通</div><div class="sub">开启后,另一边最近 30 条消息按时间混入聊天历史</div></div><div class="toggle${on?' on':''}"><div class="knob"></div></div></div>`;
+    sh.querySelector('.toggle').onclick=()=>{saveJSON('ai-phone-share-history',!loadJSON('ai-phone-share-history',true));renderList();};
+    box.appendChild(sh);
+    const item=document.createElement('div');item.className='plist-item';
+    item.innerHTML=`<div class="plist-head"><div style="flex:1"><div class="nm">默认预设(自带)</div><div class="sub">${act?'':'✅ 使用中 · '}${p.items.length} 条 · 锁定条目只能调顺序 · 点击展开</div></div>${act?'<span style="color:var(--accent);font-size:12px;cursor:pointer" data-use>改用此预设</span>':''}</div><div class="plist-body${defOpen?' open':''}"></div>`;
+    const body=item.querySelector('.plist-body');
+    const mv=(i,d)=>{const j=i+d;if(j<0||j>=p.items.length)return;[p.items[i],p.items[j]]=[p.items[j],p.items[i]];persist();};
+    p.items.forEach((it,i)=>{
+      const row=document.createElement('div');row.className='prow';row.style.flexWrap='wrap';
+      row.innerHTML=`<div class="pname" style="cursor:pointer">${it.locked?'🔒 ':''}${esc(it.name)}${it.locked?'':`<span style="color:var(--ink-faint)"> · ${it.role} · ${SCOPE_LABEL[it.scope||'all']}</span>`}</div><span data-m="-1" style="cursor:pointer;padding:0 8px">▲</span><span data-m="1" style="cursor:pointer;padding:0 8px">▼</span>${it.locked?'':`<div class="toggle${it.enabled!==false?' on':''}"><div class="knob"></div></div>`}`;
+      row.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>mv(i,+b.dataset.m));
+      body.appendChild(row);
+      if(it.locked)return;
+      row.querySelector('.toggle').onclick=e=>{it.enabled=it.enabled===false;saveDef();e.currentTarget.classList.toggle('on',it.enabled);};
+      const pn=document.createElement('div');pn.style.cssText='display:none;width:100%;padding:6px 0';
+      pn.innerHTML=`<input class="f-n" style="width:100%" placeholder="名称" value="${esc(it.name)}"><div style="display:flex;gap:8px;margin:6px 0;align-items:center"><select class="f-r"><option>system</option><option>user</option><option>assistant</option></select><span class="f-s" style="cursor:pointer;color:var(--accent);white-space:nowrap">范围:${SCOPE_LABEL[it.scope||'all']}</span><input class="f-d" type="number" min="0" placeholder="深度注入(留空=按顺序)" style="flex:1;min-width:0" value="${it.injPos===1?it.injDepth:''}"></div><textarea class="f-c" style="width:100%;min-height:90px">${esc(it.content)}</textarea><span class="f-x" style="color:var(--danger);cursor:pointer;font-size:12px">删除条目</span>`;
+      row.querySelector('.pname').onclick=()=>{pn.style.display=pn.style.display==='none'?'block':'none';};
+      row.appendChild(pn);
+      const q=sel=>pn.querySelector(sel);q('.f-r').value=it.role;
+      q('.f-n').onchange=e=>{it.name=e.target.value||'未命名';persist();};
+      q('.f-r').onchange=e=>{it.role=e.target.value;persist();};
+      q('.f-d').onchange=e=>{const v=e.target.value;it.injPos=v===''?0:1;it.injDepth=+v||0;saveDef();};
+      q('.f-c').onblur=e=>{it.content=e.target.value;saveDef();};
+      q('.f-s').onclick=()=>{it.scope=nextScope(it.scope||'all');persist();};
+      q('.f-x').onclick=()=>{p.items.splice(i,1);persist();};
+    });
+    const add=document.createElement('div');add.className='importbtn';add.textContent='+ 新增条目';
+    add.onclick=()=>{const k=p.items.findIndex(x=>x.identifier==='chatHistory');p.items.splice(k<0?p.items.length:k,0,{identifier:'c_'+Date.now(),name:'新条目',role:'system',content:'',scope:'all',enabled:true,injPos:0,injDepth:4});defOpen=true;persist();};
+    body.appendChild(add);
+    item.querySelector('.plist-head').onclick=e=>{if(e.target.closest('[data-use]'))return;defOpen=!defOpen;body.classList.toggle('open',defOpen);};
+    const u=item.querySelector('[data-use]');if(u)u.onclick=e=>{e.stopPropagation();saveJSON('ai-phone-active-preset',null);renderList();};
+    box.appendChild(item);
+  }
   function renderList(){
     const list=loadPresets();
     const box=div.querySelector('#p-list');
-    if(list.length===0){
-      box.innerHTML='<div class="emptylist">还没有导入任何预设</div>';
-      return;
-    }
     box.innerHTML='';
+    renderDefault(box);
     list.forEach(preset=>{
       const item=document.createElement('div');
       item.className='plist-item';
@@ -634,7 +687,7 @@ function parseWorldbook(json,name){
     constant:!!e.constant,
     position:e.position,
     depth:e.depth,keys:e.key||[],keys2:e.keysecondary||[],selective:!!e.selective,logic:e.selectiveLogic||0,order:e.order||0,role:e.role||0,
-    scope:'all',
+    scope:'all',...wiExtra(e),
   }));
   return{id:'wb_'+Date.now()+'_'+Math.random().toString(36).slice(2,7),name:name,items:items};
 }
@@ -1007,7 +1060,7 @@ function parseCharacterBookToWorldbook(cb,name){
     constant:!!e.constant,
     position:(e.extensions&&e.extensions.position!=null)?e.extensions.position:(e.position==='after_char'?1:0),
     depth:(e.extensions&&e.extensions.depth)||null,keys:e.keys||[],keys2:e.secondary_keys||[],selective:!!e.selective,logic:(e.extensions&&e.extensions.selection_logic)||0,order:e.insertion_order||0,role:(e.extensions&&e.extensions.role)||0,
-    scope:'all',
+    scope:'all',...wiExtra(Object.assign({},e,e.extensions||{})),
   }));
   return{id:'wb_'+Date.now()+'_'+Math.random().toString(36).slice(2,7),name:name,items:items,fromCharacter:true};
 }
@@ -1271,60 +1324,87 @@ const ERR_PREFIX='⚠️ 请求失败';
 
 /* ---- 世界书激活:常驻 / 关键词(含 /正则/、次要关键词逻辑)/ 按 position 归位 / 角色卡内嵌书只对该角色生效 ---- */
 function wiPos(p){return typeof p==='string'?(p==='after_char'?1:0):(p||0);}
-function kwHit(keys,hay){
+function kwHit(keys,hay,cs,ww){
   return keys.some(k=>{
     k=String(k).trim();if(!k)return false;
     const m=/^\/([\s\S]+)\/([a-z]*)$/i.exec(k);
-    try{return m?new RegExp(m[1],m[2]).test(hay):hay.toLowerCase().includes(k.toLowerCase());}catch(e){return false;}
+    try{
+      if(m)return new RegExp(m[1],m[2]).test(hay);
+      if(ww)return new RegExp('(?<![\\p{L}\\p{N}_])'+k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(?![\\p{L}\\p{N}_])',cs?'u':'iu').test(hay);
+      return cs?hay.includes(k):hay.toLowerCase().includes(k.toLowerCase());
+    }catch(e){return false;}
   });
 }
-function activeWorldInfo(char,hay,scope){
-  const out={before:[],after:[],depth:[]},hits=[];
+/* 世界书(接近 SillyTavern):常驻/关键词/正则/次要关键词逻辑、单条扫描深度、大小写/整词、概率、递归激活(最多 3 轮,支持 excludeRecursion/preventRecursion/delayUntilRecursion)、position 0-6。未实现:sticky/cooldown/delay、token 预算、包含组 */
+function activeWorldInfo(char,msgs,scope){
+  const out={before:[],after:[],depth:[],emTop:[],emBottom:[]},items=[];
   loadWorldbooks().forEach(wb=>{
     if(wb.fromCharacter&&char.worldbookId!==wb.id)return;
-    wb.items.forEach(it=>{
-      if(!it.enabled||!(it.scope==='all'||it.scope===scope)||!it.content)return;
-      const keys=it.keys||(it.key?it.key.split(/\s*,\s*/):[]);
-      let ok=!!it.constant||(keys.length>0&&kwHit(keys,hay));
+    wb.items.forEach(it=>{if(it.enabled&&it.content&&(it.scope==='all'||it.scope===scope))items.push(it);});
+  });
+  const hits=[],done=new Set();let rec='';
+  for(let pass=0;pass<4;pass++){
+    let added=false;
+    items.forEach(it=>{
+      if(done.has(it)||(pass>0&&it.excludeRecursion)||(pass===0&&it.delayUntilRecursion))return;
+      const hay=msgs.slice(-(it.scanDepth||4)).join('\n')+(pass>0?'\n'+rec:'');
+      const keys=it.keys||(it.key?it.key.split(/\s*,\s*/):[]),cs=!!it.caseSensitive,ww=!!it.matchWholeWords;
+      let ok=!!it.constant||(keys.length>0&&kwHit(keys,hay,cs,ww));
       if(ok&&!it.constant&&it.selective&&(it.keys2||[]).length){
-        const any=kwHit(it.keys2,hay),all=it.keys2.every(k=>kwHit([k],hay)),L=it.logic||0;
+        const any=kwHit(it.keys2,hay,cs,ww),all=it.keys2.every(k=>kwHit([k],hay,cs,ww)),L=it.logic||0;
         ok=L===0?any:L===1?!all:L===2?!any:all;
       }
-      if(ok)hits.push(it);
+      if(!ok)return;
+      done.add(it);
+      if(it.useProbability!==false&&it.probability!=null&&it.probability<100&&Math.random()*100>=it.probability)return;
+      hits.push(it);added=true;
+      if(!it.preventRecursion)rec+='\n'+it.content;
     });
-  });
+    if(!added)break;
+  }
   hits.sort((a,b)=>(a.order||0)-(b.order||0)).forEach(it=>{
     const p=wiPos(it.position);
     if(p===4)out.depth.push({depth:it.depth!=null?it.depth:4,role:['system','user','assistant'][it.role||0]||'system',content:it.content});
-    else if(p===0||p===5)out.before.push(it.content);else out.after.push(it.content);
+    else if(p===5)out.emTop.push(it.content);else if(p===6)out.emBottom.push(it.content);
+    else if(p===0)out.before.push(it.content);else out.after.push(it.content);
   });
   return out;
 }
 
-/* 提示词组装顺序:预设条目(按预设顺序)里的 marker 占位 → 角色卡字段 / 世界书 / 聊天记录;没选预设则用默认顺序 */
-function buildMessagesForAPI(char,state,scope){
-  scope=scope||'offline';
-  const preset=getActivePreset();
-  const scripts=collectActiveRegexScripts(char.name,preset&&preset.name,char.id);
+/* 历史:线上线下共用。开启「历史互通」时,另一边最近 30 条按时间混入,并加【线上聊天】/【线下剧情】前缀 */
+const HIST_TAG={online:'【线上聊天】',offline:'【线下剧情】'};
+function collectHistory(char,scope,state){
+  const preset=getActivePreset(),scripts=collectActiveRegexScripts(char.name,preset&&preset.name,char.id);
   const ctx={char:char.name,user:getPersonaName()};
-  const mac=t=>applyAllMacros(t,char.name,char);
-  const hist=[],n=state.messages.length;
-  state.messages.forEach((m,i)=>{
-    let text=m.swipes[m.swipeIndex]||'';
-    const ei=text.indexOf(ERR_PREFIX);
-    if(ei===0)return;                       // 纯报错消息不发给模型
-    if(ei>0)text=text.slice(0,ei).trim();   // 带部分内容的报错,只保留正文
+  const offMsgs=(msgs,depthOn)=>{const out=[],n=msgs.length;msgs.forEach((m,i)=>{
+    let t=m.swipes[m.swipeIndex]||'';const ei=t.indexOf(ERR_PREFIX);
+    if(ei===0)return;if(ei>0)t=t.slice(0,ei).trim();
     const role=m.role==='ai'?'ai':'user';
-    text=applyRegexList(text,scripts,role,'prompt',Object.assign({},ctx,{depth:n-1-i}));
-    hist.push({role:role==='ai'?'assistant':'user',content:text});
-  });
-  const wi=activeWorldInfo(char,hist.slice(-4).map(h=>h.content).join('\n'),scope);
-  const fill={worldInfoBefore:wi.before.join('\n'),worldInfoAfter:wi.after.join('\n'),charDescription:char.description,
-    personaDescription:personaText(),charPersonality:char.personality,scenario:char.scenario,dialogueExamples:char.mesExample};
-  const order=preset?preset.items.filter(i=>i.enabled):[
-    {identifier:'main',role:'system',content:char.systemPrompt||''},
-    ...['worldInfoBefore','personaDescription','charDescription','charPersonality','scenario','worldInfoAfter','dialogueExamples','chatHistory'].map(id=>({marker:true,identifier:id})),
-  ];
+    t=applyRegexList(t,scripts,role,'prompt',depthOn?Object.assign({},ctx,{depth:n-1-i}):ctx);
+    out.push({role:role==='ai'?'assistant':'user',content:t,ts:m.ts||0});});return out;};
+  const wx=msgs=>msgs.map(m=>({role:m.role==='ai'?'assistant':'user',content:m.text,ts:m.ts||0}));
+  const own=scope==='online'?wx(state.messages.slice(-40)):offMsgs(state.messages,true);
+  if(!own.length||!loadJSON('ai-phone-share-history',true))return own;
+  const last=own[own.length-1].ts||Infinity,tag=HIST_TAG[scope==='online'?'offline':'online'];
+  const other=(scope==='online'?offMsgs(loadOfflineState(char.id).messages,false):wx(loadWx(char.id).messages))
+    .filter(m=>m.ts&&m.ts<=last).slice(-30).map(m=>Object.assign({},m,{content:tag+m.content}));
+  return own.concat(other).sort((a,b)=>a.ts-b.ts);
+}
+
+/* 提示词组装:完全按当前预设(默认预设或导入预设)的条目顺序,线上线下共用;条目 scope 决定在哪边生效 */
+function buildPrompt(char,state,scope){
+  const preset=getActivePreset(),mac=t=>applyAllMacros(t,char.name,char);
+  const hist=collectHistory(char,scope,state);
+  const wi=activeWorldInfo(char,hist.map(h=>h.content),scope);
+  const fill={main:char.systemPrompt,worldInfoBefore:wi.before.join('\n'),worldInfoAfter:wi.after.join('\n'),charDescription:char.description,
+    personaDescription:personaText(),charPersonality:char.personality,scenario:char.scenario,
+    dialogueExamples:[wi.emTop.join('\n'),char.mesExample,wi.emBottom.join('\n')].filter(x=>x&&String(x).trim()).join('\n'),
+    onlineHint:scope==='online'?ONLINE_HINT:'',postHistory:char.postHistoryInstructions};
+  const order=preset.items.filter(i=>i.enabled!==false&&(!i.scope||i.scope==='all'||i.scope===scope));
+  const legacyPost=!preset.items.some(i=>i.identifier==='postHistory');
+  if(scope==='online'&&!preset.items.some(i=>i.identifier==='onlineHint')){ // 导入的预设没有线上提示词条目时自动补上
+    const k=order.findIndex(i=>i.identifier==='chatHistory');order.splice(k<0?order.length:k,0,{marker:true,identifier:'onlineHint'});
+  }
   const head=[],tail=[],inj=[];let afterHist=false;
   order.forEach(it=>{
     if(it.marker){
@@ -1339,11 +1419,12 @@ function buildMessagesForAPI(char,state,scope){
     (afterHist?tail:head).push({role,content:mac(it.content)});
   });
   wi.depth.forEach(d=>inj.push({depth:d.depth,role:d.role,content:mac(d.content)}));
-  if(char.postHistoryInstructions&&String(char.postHistoryInstructions).trim())tail.push({role:'system',content:mac(char.postHistoryInstructions)});
-  const body=hist.slice();
+  if(legacyPost&&char.postHistoryInstructions&&String(char.postHistoryInstructions).trim())tail.push({role:'system',content:mac(char.postHistoryInstructions)});
+  const body=hist.map(h=>({role:h.role,content:h.content}));
   inj.sort((a,b)=>b.depth-a.depth).forEach(d=>body.splice(Math.max(0,body.length-d.depth),0,{role:d.role,content:d.content}));
   return head.concat(body,tail);
 }
+function buildMessagesForAPI(char,state,scope){return buildPrompt(char,state,scope||'offline');}
 
 /* 流式请求(SSE);服务端不支持流式时自动退回普通请求。opts:{signal,onDelta(fullText)} */
 async function callLLM(msgs,opts){
@@ -1714,15 +1795,7 @@ function makeOfflineScreen(){
 /* ---------------- 消息 app(仿微信):微信 / 通讯录 / 发现 / 我 ---------------- */
 function loadWx(id){return loadJSON('ai-phone-wx-'+id,{messages:[]});}
 function saveWx(id,st){saveJSON('ai-phone-wx-'+id,st);}
-function buildWxMessages(ch,st){
-  const me=getPersonaName(),mac=t=>applyAllMacros(t,ch.name,ch);
-  const hist=st.messages.slice(-40).map(m=>({role:m.role==='ai'?'assistant':'user',content:m.text}));
-  const wi=activeWorldInfo(ch,hist.slice(-4).map(h=>h.content).join('\n'),'online');
-  const sys=[ch.systemPrompt,wi.before.join('\n'),ch.description,ch.personality,ch.scenario,personaText(),wi.after.join('\n'),ch.mesExample,
-    `【场景】现在是手机即时通讯(类微信)聊天,不是线下剧情。你是${ch.name},对方是${me}。请用口语化的短消息回复,不写旁白和动作描写;一次可发 1~4 条短消息,每条之间空一行。`,ch.postHistoryInstructions]
-    .filter(x=>x&&String(x).trim()).map(mac).join('\n\n');
-  return [{role:'system',content:sys}].concat(hist);
-}
+function buildWxMessages(ch,st){return buildPrompt(ch,st,'online');}
 function makeMessagesScreen(){
   const div=document.createElement('div');div.className='screen';
   div.innerHTML=`<header><span class="back">‹ 返回</span><h2 id="m-title">微信</h2><span style="width:36px"></span></header>
