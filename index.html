@@ -184,6 +184,7 @@ button.primary:active{opacity:.85;}
 .bubblebox .swipenav{display:flex;justify-content:flex-end;margin:0;padding:0 8px 6px}
 .rich-frame{width:100%;border:0;display:block;background:transparent}
 .md{white-space:normal}.bubbletext.md{white-space:normal}
+.cot{border-bottom:1px solid var(--glass-border);font-size:12px;color:var(--ink-faint)}.cot summary{cursor:pointer;padding:7px 12px;user-select:none}.cotbody{padding:0 12px 10px;white-space:pre-wrap;line-height:1.5}
 .md p{margin:0 0 8px}.md p:last-child{margin:0}.md h1,.md h2,.md h3,.md h4,.md h5,.md h6{margin:6px 0;font-size:1.1em}
 .md blockquote{margin:6px 0;padding:2px 10px;border-left:3px solid var(--accent-dim);color:var(--ink-dim)}
 .md pre{background:rgba(0,0,0,.3);padding:8px;border-radius:8px;overflow-x:auto;white-space:pre;margin:6px 0}
@@ -524,6 +525,33 @@ function longPressDrag(rows,onDrop){
     row.addEventListener('pointerup',end);row.addEventListener('pointercancel',end);
   });
 }
+/* 思维链/正文标签:原文照存,显示时拆分;注入提示词时去掉思维链 */
+function loadCot(){return Object.assign({thinkOpen:'<think>',thinkClose:'</think>',bodyOpen:'<content>',bodyClose:'</content>'},loadJSON('ai-phone-cot',{}));}
+function splitCot(text,cfg){
+  cfg=cfg||loadCot();let rest=text||'',body='';const to=cfg.thinkOpen,tc=cfg.thinkClose,ts=[];
+  if(!to||!tc)return{think:'',body:rest};
+  for(;;){
+    const a=rest.indexOf(to);if(a<0){body+=rest;break;}
+    body+=rest.slice(0,a);const b=rest.indexOf(tc,a+to.length);
+    if(b<0){ts.push(rest.slice(a+to.length));break;} // 流式中,思维链还没写完
+    ts.push(rest.slice(a+to.length,b));rest=rest.slice(b+tc.length);
+  }
+  return{think:ts.join('\n\n').trim(),body:body.trim()};
+}
+function extractBody(t,cfg){
+  cfg=cfg||loadCot();if(!cfg.bodyOpen||!cfg.bodyClose)return t;
+  const a=t.indexOf(cfg.bodyOpen);if(a<0)return t;
+  const b=t.indexOf(cfg.bodyClose,a+cfg.bodyOpen.length);
+  return(b<0?t.slice(a+cfg.bodyOpen.length):t.slice(a+cfg.bodyOpen.length,b)).trim();
+}
+function presetToJSON(p){
+  return{name:p.name,prompts:p.items.map(i=>({identifier:i.identifier,name:i.name,role:i.role||'system',content:i.content||'',marker:!!i.marker,system_prompt:!!i.marker,injection_position:i.injPos||0,injection_depth:i.injDepth!=null?i.injDepth:4,enabled:i.enabled!==false,scope:i.scope||'all'})),
+    prompt_order:[{character_id:100001,order:p.items.map(i=>({identifier:i.identifier,enabled:i.enabled!==false}))}],extensions:{regex_scripts:p._rawExtRegex||[]}};
+}
+function downloadJSON(name,obj){
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(obj,null,2)],{type:'application/json'}));
+  a.download=name.replace(/[\\/:*?"<>|]/g,'_')+'.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+}
 function wiExtra(x){
   const g=(...ks)=>ks.map(k=>x[k]).find(v=>v!=null);
   return{probability:g('probability')!=null?g('probability'):100,useProbability:g('useProbability')!==false,scanDepth:g('scanDepth','scan_depth')||null,
@@ -546,7 +574,7 @@ function parseSillyTavernPreset(json,name){
       content:p.content||'',
       marker:!!p.marker,
       injPos:p.injection_position||0,injDepth:(p.injection_depth!=null?p.injection_depth:4),
-      enabled:o.enabled!==false,
+      enabled:o.enabled!==false,scope:p.scope||'all',
     };
   });
   return{id:'preset_'+Date.now()+'_'+Math.random().toString(36).slice(2,7),name:name,type:'offline',items:items,_rawExtRegex:(json.extensions&&json.extensions.regex_scripts)||[]};
@@ -596,7 +624,7 @@ function makePresetsScreen(){
     sh.querySelector('.toggle').onclick=()=>{saveJSON('ai-phone-share-history',!loadJSON('ai-phone-share-history',true));renderList();};
     box.appendChild(sh);
     const item=document.createElement('div');item.className='plist-item';
-    item.innerHTML=`<div class="plist-head"><div style="flex:1"><div class="nm">默认预设(自带)</div><div class="sub">${act?'':'✅ 使用中 · '}${p.items.length} 条 · 长按条目拖动排序 · 点击展开</div></div>${act?'<span style="color:var(--accent);font-size:12px;cursor:pointer" data-use>改用此预设</span>':''}</div><div class="plist-body${defOpen?' open':''}"></div>`;
+    item.innerHTML=`<div class="plist-head"><div style="flex:1"><div class="nm">默认预设(自带)</div><div class="sub">${act?'':'✅ 使用中 · '}${p.items.length} 条 · 长按条目拖动排序 · 点击展开</div></div>${act?'<span style="color:var(--accent);font-size:12px;cursor:pointer" data-use>改用此预设</span>':''}<span style="color:var(--accent);font-size:12px;cursor:pointer;margin-left:10px" data-exp>导出</span></div><div class="plist-body${defOpen?' open':''}"></div>`;
     const body=item.querySelector('.plist-body');
     const mv=(i,d)=>{const j=i+d;if(j<0||j>=p.items.length)return;[p.items[i],p.items[j]]=[p.items[j],p.items[i]];persist();};
     p.items.forEach((it,i)=>{
@@ -621,7 +649,8 @@ function makePresetsScreen(){
     const add=document.createElement('div');add.className='importbtn';add.textContent='+ 新增条目';
     add.onclick=()=>{const k=p.items.findIndex(x=>x.identifier==='chatHistory');p.items.splice(k<0?p.items.length:k,0,{identifier:'c_'+Date.now(),name:'新条目',role:'system',content:'',scope:'all',enabled:true,injPos:0,injDepth:4});defOpen=true;persist();};
     body.appendChild(add);
-    item.querySelector('.plist-head').onclick=e=>{if(e.target.closest('[data-use]'))return;defOpen=!defOpen;body.classList.toggle('open',defOpen);};
+    item.querySelector('.plist-head').onclick=e=>{if(e.target.closest('[data-use],[data-exp]'))return;defOpen=!defOpen;body.classList.toggle('open',defOpen);};
+    item.querySelector('[data-exp]').onclick=e=>{e.stopPropagation();downloadJSON('默认预设',presetToJSON(p));};
     const u=item.querySelector('[data-use]');if(u)u.onclick=e=>{e.stopPropagation();saveJSON('ai-phone-active-preset',null);renderList();};
     box.appendChild(item);
   }
@@ -640,9 +669,10 @@ function makePresetsScreen(){
             <div class="nm">${preset.name}</div>
             <div class="sub">${loadJSON('ai-phone-active-preset',null)===preset.id?'✅ 使用中 · ':''}${preset.items.length} 条(${enabledCount} 启用) · 点击展开</div>
           </div>
-          <div class="toggle${loadJSON('ai-phone-active-preset',null)===preset.id?' on':''}" data-act="use" style="margin-right:10px"><div class="knob"></div></div><span style="color:var(--danger);font-size:12px;cursor:pointer" data-del="${preset.id}">删除</span>
+          <div class="toggle${loadJSON('ai-phone-active-preset',null)===preset.id?' on':''}" data-act="use" style="margin-right:10px"><div class="knob"></div></div><span style="color:var(--accent);font-size:12px;cursor:pointer;margin-right:10px" data-exp>导出</span><span style="color:var(--danger);font-size:12px;cursor:pointer" data-del="${preset.id}">删除</span>
         </div>
         <div class="plist-body"></div>`;
+      item.querySelector('[data-exp]').onclick=e=>{e.stopPropagation();downloadJSON(preset.name,presetToJSON(preset));};
       const body=item.querySelector('.plist-body');
       preset.items.forEach((it,idx)=>{
         if(it.marker)return;
@@ -1407,6 +1437,7 @@ function collectHistory(char,scope,state){
     let t=m.swipes[m.swipeIndex]||'';const ei=t.indexOf(ERR_PREFIX);
     if(ei===0)return;if(ei>0)t=t.slice(0,ei).trim();
     const role=m.role==='ai'?'ai':'user';
+    if(role==='ai'){t=splitCot(t).body;if(!depthOn)t=extractBody(t);}
     t=applyRegexList(t,scripts,role,'prompt',depthOn?Object.assign({},ctx,{depth:n-1-i}):ctx);
     out.push({role:role==='ai'?'assistant':'user',content:t,ts:m.ts||0});});return out;};
   const wx=msgs=>msgs.map(m=>({role:m.role==='ai'?'assistant':'user',content:m.quote?'[引用「'+m.quote+'」] '+m.text:m.text,ts:m.ts||0}));
@@ -1510,7 +1541,7 @@ function makeOfflineScreen(){
   const div=document.createElement('div');
   div.className='screen';
   div.innerHTML=`
-    <header><span class="back">‹ 返回</span><h2 id="of-title">线下</h2><span id="of-switch" style="font-size:12px;color:var(--accent);cursor:pointer">切换角色</span></header>
+    <header><span class="back">‹ 返回</span><h2 id="of-title">线下</h2><span id="of-switch" style="font-size:12px;color:var(--accent);cursor:pointer">设置</span></header>
     <div class="body" style="display:flex;flex-direction:column;padding:0;flex:1;">
       <div id="of-charpick"></div>
       <div id="of-chat" style="display:none;flex:1;overflow-y:auto;padding:14px;"></div>
@@ -1549,6 +1580,21 @@ function makeOfflineScreen(){
     return true;
   }
 
+  function openSettings(){
+    const c=loadCot(),mask=document.createElement('div');
+    mask.style.cssText='position:absolute;inset:0;z-index:30;background:var(--bg-mid);overflow-y:auto;padding:18px';
+    const f=(k,l)=>'<div style="margin:12px 0 4px;font-size:12px;color:var(--ink-faint)">'+l+'</div><input data-k="'+k+'" style="width:100%" value="'+esc(c[k]||'').replace(/"/g,'&quot;')+'">';
+    mask.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:17px">线下设置</b><span id="os-x" style="color:var(--accent);cursor:pointer">关闭</span></div>'
+      +'<div class="importbtn" id="os-sw" style="margin:14px 0">🔄 切换角色'+(activeChar&&!inPicker?'(当前:'+esc(activeChar.name)+')':'')+'</div>'
+      +'<div style="font-size:14px;font-weight:600;margin-top:8px">思维链 / 正文标签</div>'
+      +'<div style="font-size:11.5px;color:var(--ink-faint);margin-top:4px;line-height:1.6">思维链:标签内的内容在气泡顶部折叠显示,发给模型的历史里会被去掉。<br>正文:填了前后缀后,气泡只显示标签之间的内容(隐藏标签本身);留空则不处理。模型输出的原文始终完整保存。</div>'
+      +f('thinkOpen','思维链前缀')+f('thinkClose','思维链后缀')+f('bodyOpen','正文前缀(留空=不提取)')+f('bodyClose','正文后缀')
+      +'<button class="primary" id="os-ok" style="width:100%;margin-top:18px">保存</button>';
+    mask.querySelector('#os-x').onclick=()=>mask.remove();
+    mask.querySelector('#os-sw').onclick=()=>{mask.remove();showCharPicker();};
+    mask.querySelector('#os-ok').onclick=()=>{const v={};mask.querySelectorAll('input[data-k]').forEach(i=>v[i.dataset.k]=i.value.trim());saveJSON('ai-phone-cot',v);mask.remove();if(activeChar&&!inPicker)renderMessages('keep');};
+    div.appendChild(mask);
+  }
   function showCharPicker(){
     inPicker=true;
     $('#of-chat').style.display='none';
@@ -1602,7 +1648,8 @@ function makeOfflineScreen(){
     const tx=$('#of-ptext');if(!tx)return;
     const chat=$('#of-chat');
     const near=chat.scrollHeight-chat.scrollTop-chat.clientHeight<140;
-    tx.classList.add('md');tx.innerHTML=pending.text?mdToHtml(applyRegexList(pending.text,pending.scripts,'ai','display',pending.ctx)):'…';
+    const sp=splitCot(pending.text),shown=extractBody(sp.body);
+    tx.classList.add('md');tx.innerHTML=shown?mdToHtml(applyRegexList(shown,pending.scripts,'ai','display',pending.ctx)):(sp.think?'💭 思考中… '+sp.think.length+' 字':'…');
     updatePendingStatus();
     if(near)chat.scrollTop=chat.scrollHeight;
   }
@@ -1653,7 +1700,9 @@ function makeOfflineScreen(){
           <span data-act="del">删除</span>
           ${isLastAI?'<span data-act="regen">重新生成</span>':''}
         </div>`;
-      renderRich(bubble.querySelector('.bubbletext'),applyRegexList(text,scripts,isAI?'ai':'user','display',Object.assign({},ctx,{depth:lastIdx-idx})));
+      const sp=isAI?splitCot(text):{think:'',body:text},shown=isAI?extractBody(sp.body):text;
+      renderRich(bubble.querySelector('.bubbletext'),applyRegexList(shown,scripts,isAI?'ai':'user','display',Object.assign({},ctx,{depth:lastIdx-idx})));
+      if(sp.think){const d=document.createElement('details');d.className='cot';d.innerHTML='<summary>💭 思维链</summary><div class="cotbody"></div>';d.querySelector('.cotbody').textContent=sp.think;bubble.querySelector('.bubblebox').prepend(d);}
 
       bubble.querySelectorAll('[data-sw]').forEach(a=>{
         a.onclick=()=>{
@@ -1795,7 +1844,7 @@ function makeOfflineScreen(){
       e.preventDefault();$('#of-send').click();
     }
   });
-  $('#of-switch').onclick=showCharPicker;
+  $('#of-switch').onclick=openSettings;
   $('#of-send').onclick=()=>{
     if(pending){stopGeneration();return;}
     const text=inputEl.value.trim();
