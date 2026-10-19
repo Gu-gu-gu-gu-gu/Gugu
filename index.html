@@ -204,6 +204,29 @@ input[type=number],input[type=datetime-local]{width:100%;padding:10px 11px;borde
 .wxm .avatar{width:38px;height:38px;border-radius:8px}.wxb{max-width:68%;padding:9px 12px;border-radius:8px;font-size:14.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word;background:var(--glass);border:1px solid var(--glass-border)}
 .wxm.me .wxb{background:var(--accent);color:#0a2420;border-color:transparent}
 .wxsys{text-align:center;font-size:11.5px;color:var(--ink-faint);margin:6px 0 12px}
+/* ---------- 生图 app ---------- */
+.ig-list{flex:1;overflow-y:auto;padding:14px 16px}
+.ig-imgs{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-top:8px}
+.ig-imgs img{width:100%;border-radius:10px;display:block;cursor:zoom-in;background:var(--glass);min-height:60px;object-fit:cover}
+.ig-refs{display:flex;gap:8px;overflow-x:auto;padding:6px 0}
+.ig-refs:empty{display:none}
+.ig-ref{position:relative;flex:0 0 auto}
+.ig-ref img{width:48px;height:48px;border-radius:8px;object-fit:cover;display:block}
+.ig-ref b{position:absolute;top:-5px;right:-5px;width:18px;height:18px;border-radius:50%;background:var(--danger);color:#fff;font-size:12px;line-height:18px;text-align:center;cursor:pointer}
+.ig-dock{flex:0 0 auto;border-top:1px solid var(--glass-border);padding:8px 14px calc(env(safe-area-inset-bottom,0px) + 10px);background:var(--bg-mid)}
+.ig-sum{font-size:12px;color:var(--ink-dim);cursor:pointer;padding:2px 0 4px}
+.ig-panel{display:none;grid-template-columns:1fr 1fr;gap:0 8px;margin-bottom:6px}
+.ig-panel.open{display:grid}
+.ig-panel label{margin:6px 0 4px}
+.ig-bar{display:flex;gap:8px;align-items:flex-end}
+.ig-bar textarea{flex:1;min-width:0;min-height:42px;max-height:140px;resize:none;padding:10px 11px;border-radius:9px;border:1px solid var(--glass-border);background:rgba(255,255,255,.05);color:var(--ink);font-size:14px;font-family:inherit;outline:none}
+.ig-bar textarea:focus{border-color:var(--accent)}
+.ig-btn{width:42px;height:42px;border-radius:10px;border:1px solid var(--glass-border);background:var(--glass);color:var(--ink);font-size:18px;cursor:pointer;flex:0 0 auto}
+.ig-btn.go{width:auto;padding:0 16px;background:var(--accent);color:#0a2420;border:none;font-weight:600;font-size:14px}
+.ig-view{position:absolute;inset:0;z-index:5;background:rgba(5,6,10,.94);display:none;flex-direction:column}
+.ig-view.show{display:flex}
+.ig-view img{flex:1;min-height:0;width:100%;object-fit:contain;padding-top:env(safe-area-inset-top,0px)}
+.ig-view .tb{display:flex;gap:8px;padding:12px 14px calc(env(safe-area-inset-bottom,0px) + 12px)}
 </style>
 </head>
 <body>
@@ -388,6 +411,7 @@ const APPS=[
   {id:'worldbook',icon:'📖',label:'世界书'},
   {id:'regex',icon:'✂️',label:'正则'},
   {id:'characters',icon:'🎭',label:'角色'},
+  {id:'imagegen',icon:'🎨',label:'生图'},
 ];
 const grid=document.getElementById('appgrid');
 APPS.forEach(a=>{
@@ -477,10 +501,23 @@ function makeSettingsScreen(){
         <label>服务商</label>
         <select id="s-img-provider">
           <option value="novelai">NovelAI</option>
-          <option value="gptimage">GPT-image</option>
+          <option value="gptimage">GPT-image / OpenAI 兼容</option>
         </select>
         <label>API Key</label>
-        <input type="password" id="s-img-key" placeholder="API Key">
+        <input type="password" id="s-img-key" placeholder="API Key(留空且 Base URL 也留空 = 沿用 LLM 的 Key)">
+        <div id="s-img-oa" style="display:none">
+          <label>Base URL(OpenAI 兼容,一般以 /v1 结尾)</label>
+          <input type="text" id="s-img-url" placeholder="留空 = 沿用上面 LLM 的 Base URL 和 Key">
+          <label>模型名</label>
+          <input type="text" id="s-img-model" placeholder="gpt-image-1 / gpt-image-2 / 聚合站给的名字">
+          <label>接口类型</label>
+          <select id="s-img-mode"><option value="images">标准:/images/generations + /images/edits</option><option value="chat">/chat/completions(部分聚合站的生图模型)</option></select>
+          <label>参考图字段名(仅标准接口)</label>
+          <select id="s-img-ref"><option value="image[]">image[](OpenAI 官方)</option><option value="image">image(部分聚合站)</option></select>
+          <label>额外参数 JSON(可选,合并进请求)</label>
+          <input type="text" id="s-img-extra" placeholder='{"moderation":"low"}'>
+          <div class="sub" style="font-size:12px;color:var(--ink-faint);margin-top:8px">尺寸、质量、格式、张数在「生图」app 里调,值选「默认」就不会传给接口。</div>
+        </div>
       </fieldset>
       <fieldset>
         <legend>语音生成 API</legend>
@@ -507,6 +544,13 @@ function makeSettingsScreen(){
   div.querySelector('#s-llm-model').value=cfg.llm.model;
   div.querySelector('#s-img-provider').value=cfg.image.provider;
   div.querySelector('#s-img-key').value=cfg.image.apiKey;
+  div.querySelector('#s-img-url').value=cfg.image.baseUrl||'';
+  div.querySelector('#s-img-model').value=cfg.image.model||'';
+  div.querySelector('#s-img-mode').value=cfg.image.mode||'images';
+  div.querySelector('#s-img-ref').value=cfg.image.refField||'image[]';
+  div.querySelector('#s-img-extra').value=cfg.image.extra||'';
+  const igTog=()=>{div.querySelector('#s-img-oa').style.display=div.querySelector('#s-img-provider').value==='gptimage'?'block':'none';};
+  div.querySelector('#s-img-provider').onchange=igTog;igTog();
   div.querySelector('#s-voice-provider').value=cfg.voice.provider;
   div.querySelector('#s-voice-key').value=cfg.voice.apiKey;
   div.querySelector('#s-changepass').onclick=()=>openPasspad('setnew');
@@ -621,10 +665,12 @@ function makeSettingsScreen(){
       if(isNaN(t)){alert('请先选择虚拟时间的起点');return;}
       time.virtualBase=t;time.realAtSet=Date.now();vtEdited=false;
     }
+    const ex=$q('#s-img-extra').value.trim();
+    if(ex){try{const o=JSON.parse(ex);if(!o||typeof o!=='object'||Array.isArray(o))throw 0;}catch(e){alert('生图「额外参数」不是合法的 JSON 对象');return;}}
     const newCfg=Object.assign({},old,{
       llm:curLLM(),
       llmProfileId:activeProf,
-      image:{provider:$q('#s-img-provider').value,apiKey:$q('#s-img-key').value.trim()},
+      image:Object.assign({},old.image||{},{provider:$q('#s-img-provider').value,apiKey:$q('#s-img-key').value.trim(),baseUrl:$q('#s-img-url').value.trim(),model:$q('#s-img-model').value.trim(),mode:$q('#s-img-mode').value,refField:$q('#s-img-ref').value,extra:ex}),
       voice:{provider:$q('#s-voice-provider').value,apiKey:$q('#s-voice-key').value.trim()},
       time,
       ctx:{online:Math.max(0,parseInt($q('#s-r-on').value)||0),offline:Math.max(0,parseInt($q('#s-r-off').value)||0)},
@@ -2179,6 +2225,202 @@ function makeMessagesScreen(){
   render();return div;
 }
 
+/* ---------------- 生图 app:只发用户写的需求(+参考图),不注入预设/世界书/角色/用户设定 ---------------- */
+const IG_SIZES=['','1024x1024','1536x1024','1024x1536','2048x2048','2048x1152','1152x2048','3840x2160'];
+const IG_Q=['','low','medium','high','standard','hd'];
+const IG_F=['','png','jpeg','webp'];
+function igCfg(){
+  const all=loadJSON('ai-phone-settings',{});
+  const im=Object.assign({provider:'novelai',apiKey:'',baseUrl:'',model:'gpt-image-1',mode:'images',refField:'image[]',extra:'',size:'',quality:'',format:'',n:1},all.image||{});
+  im.model=im.model||'gpt-image-1';
+  if(!im.baseUrl&&all.llm&&all.llm.baseUrl){im.baseUrl=all.llm.baseUrl;if(!im.apiKey)im.apiKey=all.llm.apiKey||'';} // 留空 = 沿用 LLM 的地址和 Key
+  return im;
+}
+function igSave(patch){const all=loadJSON('ai-phone-settings',{});all.image=Object.assign({},all.image||{},patch);saveJSON('ai-phone-settings',all);}
+const igDB=(()=>{
+  let p;const open=()=>p||(p=new Promise((res,rej)=>{const r=indexedDB.open('ai-phone-imggen',1);r.onupgradeneeded=()=>r.result.createObjectStore('rec',{keyPath:'id'});r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);}));
+  const tx=async(m,f)=>{const d=await open();return new Promise((res,rej)=>{const t=d.transaction('rec',m),r=f(t.objectStore('rec'));t.oncomplete=()=>res(r&&r.result);t.onerror=()=>rej(t.error);});};
+  return{all:()=>tx('readonly',s=>s.getAll()),put:o=>tx('readwrite',s=>s.put(o)),del:id=>tx('readwrite',s=>s.delete(id)),clear:()=>tx('readwrite',s=>s.clear())};
+})();
+const igOU=new WeakMap();
+const igURL=b=>b instanceof Blob?(igOU.get(b)||(igOU.set(b,URL.createObjectURL(b)),igOU.get(b))):b;
+function igB64(s){
+  s=s.replace(/^data:[^,]*,/,'');const bin=atob(s),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
+  return new Blob([u],{type:s.startsWith('/9j')?'image/jpeg':s.startsWith('UklGR')?'image/webp':'image/png'});
+}
+const igDataURL=b=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(b);});
+async function igShrink(file){ // 参考图太大就压到长边 2048、JPEG
+  let bmp;try{bmp=await createImageBitmap(file);}catch(e){return file;}
+  const m=Math.max(bmp.width,bmp.height);
+  if(m<=2048&&file.size<=3e6){bmp.close&&bmp.close();return file;}
+  const k=Math.min(1,2048/m),c=document.createElement('canvas');c.width=Math.round(bmp.width*k);c.height=Math.round(bmp.height*k);
+  const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(bmp,0,0,c.width,c.height);bmp.close&&bmp.close();
+  return new Promise(r=>c.toBlob(b=>r(b||file),'image/jpeg',.92));
+}
+async function igErr(res){
+  let m='HTTP '+res.status;
+  try{const t=await res.text();try{const d=JSON.parse(t);m=(d.error&&(d.error.message||d.error))||d.message||m;if(typeof m!=='string')m=JSON.stringify(m);}catch(e){if(t)m+=' '+t.slice(0,160);}}catch(e){}
+  return new Error(m);
+}
+async function igKeep(list){ // 链接尽量下载成 Blob 存本地(很多站的链接会过期);跨域读不了就保留链接
+  return Promise.all(list.map(async u=>{
+    if(u instanceof Blob)return u;
+    try{const r=await fetch(u);if(r.ok){const b=await r.blob();if(/^image\//.test(b.type))return b;}}catch(e){}
+    return u;
+  }));
+}
+function igScan(t,out){
+  let m;const add=u=>{if(u&&!out.includes(u))out.push(u);};
+  const r1=/!\[[^\]]*\]\(\s*<?([^)\s>]+)>?[^)]*\)/g;while((m=r1.exec(t)))add(m[1]);
+  const r2=/data:image\/[a-z+.-]+;base64,[A-Za-z0-9+\/=]+/g;while((m=r2.exec(t)))add(m[0]);
+  const r3=/https?:\/\/[^\s)"'<>]+\.(?:png|jpe?g|webp|gif)(?:\?[^\s)"'<>]*)?/gi;while((m=r3.exec(t)))add(m[0]);
+}
+function igParseChat(d){
+  const m=(d.choices&&d.choices[0]&&d.choices[0].message)||{},out=[],c=m.content;
+  (m.images||[]).forEach(x=>{const u=(x.image_url&&(x.image_url.url||x.image_url))||x.url;if(u&&!out.includes(u))out.push(u);});
+  if(Array.isArray(c))c.forEach(x=>{const u=x.image_url&&(x.image_url.url||x.image_url);if(u)out.push(u);else if(x.text)igScan(x.text,out);});
+  else if(typeof c==='string')igScan(c,out);
+  if(!out.length)throw new Error('接口没有返回图片:'+(typeof c==='string'?c.slice(0,200):JSON.stringify(d).slice(0,200)));
+  return igKeep(out);
+}
+async function igGenerate(prompt,refs,p,signal){
+  const im=igCfg();
+  if(im.provider!=='gptimage')throw new Error('请先在「设置 → 生图 API」把服务商切到 GPT-image / OpenAI 兼容');
+  if(!im.baseUrl)throw new Error('请先在「设置 → 生图 API」填 Base URL(或在 LLM 里填好后这里留空)');
+  let extra={};try{extra=im.extra?JSON.parse(im.extra):{};}catch(e){throw new Error('「额外参数」不是合法 JSON');}
+  const base=im.baseUrl.replace(/\/+$/,''),auth={'Authorization':'Bearer '+(im.apiKey||'')},J={'Content-Type':'application/json'};
+  let res;
+  if(im.mode==='chat'){ // 部分聚合站:生图模型走 /chat/completions
+    const parts=[{type:'text',text:prompt}];
+    for(const b of refs)parts.push({type:'image_url',image_url:{url:await igDataURL(b)}});
+    res=await fetch(base+'/chat/completions',{method:'POST',headers:Object.assign({},J,auth),body:JSON.stringify(Object.assign({model:im.model,messages:[{role:'user',content:refs.length?parts:prompt}]},extra)),signal});
+    if(!res.ok)throw await igErr(res);
+    return igParseChat(await res.json());
+  }
+  const f={model:im.model,prompt};
+  if(p.size)f.size=p.size;if(p.quality)f.quality=p.quality;if(p.format)f.output_format=p.format;if(p.n>1)f.n=p.n;
+  Object.assign(f,extra);
+  if(refs.length){ // 有参考图 → /images/edits(multipart)
+    const fd=new FormData();Object.keys(f).forEach(k=>fd.append(k,typeof f[k]==='object'?JSON.stringify(f[k]):String(f[k])));
+    refs.forEach((b,i)=>fd.append(im.refField||'image[]',b,'ref'+(i+1)+'.'+((b.type||'image/png').split('/')[1]||'png').replace('jpeg','jpg')));
+    res=await fetch(base+'/images/edits',{method:'POST',headers:auth,body:fd,signal});
+  }else res=await fetch(base+'/images/generations',{method:'POST',headers:Object.assign({},J,auth),body:JSON.stringify(f),signal});
+  if(!res.ok)throw await igErr(res);
+  const d=await res.json(),out=[];
+  (d.data||[]).forEach(it=>{if(it.b64_json)out.push(igB64(it.b64_json));else if(it.url)out.push(it.url);});
+  if(!out.length)throw new Error('接口没有返回图片:'+JSON.stringify(d).slice(0,200));
+  return igKeep(out);
+}
+
+function makeImageGenScreen(){
+  const div=document.createElement('div');div.className='screen';
+  div.innerHTML=`
+    <header><span class="back">‹ 返回</span><h2>生图</h2><span id="ig-clear" style="cursor:pointer;color:var(--ink-dim);font-size:13px">清空</span></header>
+    <div class="ig-list" id="ig-list"></div>
+    <div class="ig-dock">
+      <div class="ig-sum" id="ig-sum"></div>
+      <div class="ig-panel" id="ig-panel">
+        <div><label>尺寸</label><select id="ig-size"></select></div>
+        <div><label>质量</label><select id="ig-q"></select></div>
+        <div id="ig-cw" style="display:none;grid-column:1/-1"><input type="text" id="ig-custom" placeholder="自定义尺寸,如 2560x1440"></div>
+        <div><label>格式</label><select id="ig-f"></select></div>
+        <div><label>张数</label><select id="ig-n"><option>1</option><option>2</option><option>3</option><option>4</option></select></div>
+      </div>
+      <div class="ig-refs" id="ig-refs"></div>
+      <div class="ig-bar"><button class="ig-btn" id="ig-att">📎</button><textarea id="ig-ta" rows="1" placeholder="描述你想生成的图…"></textarea><button class="ig-btn go" id="ig-go">生成</button></div>
+      <input type="file" id="ig-file" accept="image/*" multiple style="display:none">
+    </div>
+    <div class="ig-view" id="ig-view"><img id="ig-vimg"><div class="tb"><button class="mini" id="ig-vdl">下载</button><button class="mini" id="ig-vref">设为参考图</button><button class="mini" id="ig-vx">关闭</button></div></div>`;
+  const $=s=>div.querySelector(s);
+  div.querySelector('.back').onclick=closeAllScreens;
+  let recs=[],refs=[],pend=null,err='',last=null,busy=false,shown=20,ctrl=null,timer=null,viewSrc=null;
+  const fill=(s,a)=>{$(s).innerHTML=a.map(v=>'<option value="'+v+'">'+(v||'默认(不传)')+'</option>').join('');};
+  fill('#ig-size',IG_SIZES);$('#ig-size').insertAdjacentHTML('beforeend','<option value="__c">自定义…</option>');fill('#ig-q',IG_Q);fill('#ig-f',IG_F);
+  const getP=()=>({size:$('#ig-size').value==='__c'?$('#ig-custom').value.trim():$('#ig-size').value,quality:$('#ig-q').value,format:$('#ig-f').value,n:parseInt($('#ig-n').value)||1});
+  function sum(){const p=getP();$('#ig-sum').textContent='⚙ '+igCfg().model+' · '+(p.size||'默认尺寸')+' · '+(p.quality||'默认质量')+' · '+p.n+' 张 ▾';}
+  function loadP(){
+    const c=igCfg();
+    if(c.size&&!IG_SIZES.includes(c.size)){$('#ig-size').value='__c';$('#ig-custom').value=c.size;}else $('#ig-size').value=c.size||'';
+    $('#ig-cw').style.display=$('#ig-size').value==='__c'?'block':'none';
+    $('#ig-q').value=c.quality||'';$('#ig-f').value=c.format||'';$('#ig-n').value=String(c.n||1);sum();
+  }
+  const onP=()=>{$('#ig-cw').style.display=$('#ig-size').value==='__c'?'block':'none';igSave(getP());sum();};
+  ['#ig-size','#ig-q','#ig-f','#ig-n'].forEach(s=>$(s).onchange=onP);$('#ig-custom').oninput=onP;
+  $('#ig-sum').onclick=()=>$('#ig-panel').classList.toggle('open');
+
+  const tfmt=t=>new Date(t).toLocaleString('zh-CN',{hour12:false,month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
+  const thumbs=l=>l.length?'<div class="ig-refs">'+l.map(b=>'<span class="ig-ref"><img src="'+esc(igURL(b))+'"></span>').join('')+'</div>':'';
+  function draw(keep){
+    const L=$('#ig-list');let h='';
+    if(recs.length>shown)h+='<div class="emptylist" data-a="more" style="padding:6px;cursor:pointer;color:var(--accent)">显示更早的记录</div>';
+    if(!recs.length&&!pend&&!err)h='<div class="emptylist">写下想要的画面再发送,📎 可以附参考图。<br>这里只会把你写的内容发给生图接口,不带预设、世界书和角色设定。</div>';
+    h+=recs.slice(-shown).map(r=>'<div class="chatmsg" data-id="'+r.id+'"><div class="bubblehead"><span class="bname">我</span><span class="bts">'+tfmt(r.ts)+' · '+esc([r.model,r.params.size,r.params.quality].filter(Boolean).join(' · '))+'</span></div>'
+      +'<div class="bubbletext">'+esc(r.prompt)+'</div>'+thumbs(r.refs||[])
+      +'<div class="ig-imgs">'+r.imgs.map((s,i)=>'<img data-a="view" data-i="'+i+'" src="'+esc(igURL(s))+'">').join('')+'</div>'
+      +'<div class="bubbletools"><span data-a="copy">复制提示词</span><span data-a="redo">重新生成</span><span data-a="del">删除</span></div></div>').join('');
+    if(pend)h+='<div class="chatmsg"><div class="bubblehead"><span class="bname">我</span></div><div class="bubbletext">'+esc(pend.prompt)+'</div>'+thumbs(pend.refs)+'<div class="bubbletools"><span style="color:var(--accent)">生成中… <b id="ig-el">0</b> 秒</span><span data-a="cancel">取消</span></div></div>';
+    if(err)h+='<div class="chatmsg"><div class="bubbletext" style="color:var(--danger)">⚠️ '+esc(err)+'</div><div class="bubbletools"><span data-a="retry">重试</span><span data-a="dismiss">关闭</span></div></div>';
+    L.innerHTML=h;if(!keep)L.scrollTop=L.scrollHeight;
+  }
+  const toBlob=async s=>{if(s instanceof Blob)return s;try{const r=await fetch(s),b=await r.blob();return /^image\//.test(b.type)?b:null;}catch(e){return null;}};
+  function drawRefs(){$('#ig-refs').innerHTML=refs.map((b,i)=>'<span class="ig-ref"><img src="'+esc(igURL(b))+'"><b data-i="'+i+'">×</b></span>').join('');}
+  function addRef(b){if(refs.length>=16){alert('参考图最多 16 张');return;}refs.push(b);drawRefs();}
+  $('#ig-refs').onclick=e=>{const b=e.target.closest('b[data-i]');if(b){refs.splice(+b.dataset.i,1);drawRefs();}};
+  $('#ig-att').onclick=()=>$('#ig-file').click();
+  $('#ig-file').onchange=async e=>{for(const f of [...e.target.files])addRef(await igShrink(f));e.target.value='';};
+
+  function openView(s){viewSrc=s;$('#ig-vimg').src=igURL(s);$('#ig-view').classList.add('show');}
+  $('#ig-vx').onclick=()=>$('#ig-view').classList.remove('show');
+  $('#ig-vdl').onclick=()=>{
+    if(viewSrc instanceof Blob){const a=document.createElement('a');a.href=igURL(viewSrc);a.download='img-'+Date.now()+'.'+(viewSrc.type.split('/')[1]||'png').replace('jpeg','jpg');a.click();}
+    else window.open(viewSrc,'_blank');
+  };
+  $('#ig-vref').onclick=async()=>{const b=await toBlob(viewSrc);if(b){addRef(b);$('#ig-view').classList.remove('show');}else alert('这张图只有链接,服务器不允许浏览器读取,没法当参考图');};
+
+  async function run(prompt,rf,p){
+    if(busy)return;
+    busy=true;err='';last={prompt,refs:rf,p};ctrl=new AbortController();
+    const t0=Date.now(),tm=setTimeout(()=>ctrl.abort(),600000);
+    pend={prompt,refs:rf};draw();
+    timer=setInterval(()=>{const el=$('#ig-el');if(el)el.textContent=Math.floor((Date.now()-t0)/1000);},500);
+    try{
+      const imgs=await igGenerate(prompt,rf,p,ctrl.signal);
+      const rec={id:'g'+t0.toString(36),ts:t0,prompt,params:p,model:igCfg().model,refs:rf,imgs};
+      recs.push(rec);last=null;
+      try{await igDB.put(rec);}catch(e){}
+    }catch(e){
+      err=e.name==='AbortError'?'已取消,或超过 10 分钟没有返回':((e&&e.message)||String(e))+(e.name==='TypeError'?'(网络失败:检查 Base URL;也可能是该服务不允许浏览器跨域访问)':'');
+    }
+    clearTimeout(tm);clearInterval(timer);busy=false;pend=null;ctrl=null;draw();
+  }
+  const ta=$('#ig-ta'),autoH=()=>{ta.style.height='auto';ta.style.height=Math.min(140,ta.scrollHeight)+'px';};
+  ta.oninput=autoH;
+  const send=()=>{
+    const t=ta.value.trim();if(busy)return;if(!t){alert('先写下想生成的内容');return;}
+    const rf=refs.slice();ta.value='';refs=[];drawRefs();autoH();run(t,rf,getP());
+  };
+  $('#ig-go').onclick=send;
+  ta.onkeydown=e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();send();}};
+
+  $('#ig-list').onclick=e=>{
+    const t=e.target.closest('[data-a]');if(!t)return;
+    const a=t.dataset.a,m=t.closest('.chatmsg'),r=m&&recs.find(x=>x.id===m.dataset.id);
+    if(a==='more'){shown+=20;draw(true);}
+    else if(a==='view'&&r)openView(r.imgs[+t.dataset.i]);
+    else if(a==='copy'&&r){if(navigator.clipboard)navigator.clipboard.writeText(r.prompt).catch(()=>{});t.textContent='已复制';}
+    else if(a==='redo'&&r)run(r.prompt,(r.refs||[]).slice(),Object.assign({},r.params));
+    else if(a==='del'&&r){if(confirm('删除这条记录?')){recs=recs.filter(x=>x!==r);igDB.del(r.id).catch(()=>{});draw(true);}}
+    else if(a==='cancel'&&ctrl)ctrl.abort();
+    else if(a==='retry'&&last)run(last.prompt,last.refs,last.p);
+    else if(a==='dismiss'){err='';draw(true);}
+  };
+  $('#ig-clear').onclick=()=>{if(!recs.length||!confirm('清空所有生图记录?(图片会从本机删除)'))return;recs=[];igDB.clear().catch(()=>{});draw();};
+  div._refresh=loadP;
+  loadP();draw();
+  igDB.all().then(l=>{recs=l.sort((a,b)=>a.ts-b.ts);draw();}).catch(()=>{});
+  return div;
+}
+
 function buildScreen(id){
   switch(id){
     case 'settings': return makeSettingsScreen();
@@ -2189,6 +2431,7 @@ function buildScreen(id){
     case 'worldbook': return makeWorldbookScreen();
     case 'regex': return makeRegexScreen();
     case 'characters': return makeCharactersScreen();
+    case 'imagegen': return makeImageGenScreen();
   }
 }
 function openScreen(id){
